@@ -142,25 +142,25 @@ def load_model_once():
 # BLOCKING OPERATIONS
 # ------------------------------------------------------------------------
 def execute_block_ip(ip: str):
-    print(f"🛑 BLOCKED IP: {ip}")
+    print(f"🛑 SIMULATED BLOCK IP: {ip} (local JSON only — not a live firewall)")
     if ip not in blocked_entities["ips"]:
         blocked_entities["ips"].append(ip)
         save_blocked_entities()
 
 def execute_block_user(user: str):
-    print(f"🛑 BLOCKED USER: {user}")
+    print(f"🛑 SIMULATED BLOCK USER: {user} (local JSON only — not a live firewall)")
     if user not in blocked_entities["users"]:
         blocked_entities["users"].append(user)
         save_blocked_entities()
 
 def execute_unblock_ip(ip: str):
-    print(f"♻️ UNBLOCKED IP: {ip}")
+    print(f"♻️ SIMULATED UNBLOCK IP: {ip} (local JSON only)")
     if ip in blocked_entities["ips"]:
         blocked_entities["ips"].remove(ip)
         save_blocked_entities()
 
 def execute_unblock_user(user: str):
-    print(f"♻️ UNBLOCKED USER: {user}")
+    print(f"♻️ SIMULATED UNBLOCK USER: {user} (local JSON only)")
     if user in blocked_entities["users"]:
         blocked_entities["users"].remove(user)
         save_blocked_entities()

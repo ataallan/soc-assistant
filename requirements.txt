@@ -8,3 +8,4 @@ scipy
 werkzeug
 python-dotenv
 urllib3
+pytest

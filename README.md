@@ -36,6 +36,14 @@ copy .env.example .env   # Windows
 Edit `.env` and set `SECRET_KEY`, mail credentials, and (optionally) Wazuh values. **Never commit `.env`.**
 
 
+
+## Tests
+
+```bash
+pip install -r requirements.txt
+pytest -q
+```
+
 ## Model evaluation
 
 Run an honest hold-out evaluation (same feature pipeline as training):
