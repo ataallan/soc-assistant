@@ -1,0 +1,39 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets / local config
+.env
+.env.local
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Trained models (regenerate with train_model.py)
+*.pkl
+
+# Generated / runtime data (keep sample_logs.csv)
+data/triage_report.csv
+data/triage_report.jsonl
+data/high_risk_events.csv
+data/blocked_entities.json
+data/users.csv
+
+# Large generated reports at repo root if present
+triage_report.csv
+triage_report.jsonl

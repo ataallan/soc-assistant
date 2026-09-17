@@ -1,0 +1,10 @@
+flask
+flask-mail
+pandas
+scikit-learn
+joblib
+requests
+scipy
+werkzeug
+python-dotenv
+urllib3

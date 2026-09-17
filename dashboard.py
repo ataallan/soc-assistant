@@ -1,0 +1,342 @@
+from flask import Flask, render_template, request, jsonify, redirect, session
+from werkzeug.security import generate_password_hash, check_password_hash
+import threading
+import pandas as pd
+import os
+import random
+import time
+from functools import wraps
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# -------------------------------------------------
+# EMAIL (Flask-Mail)
+# -------------------------------------------------
+from flask_mail import Mail, Message
+
+# -------------------------------------------------
+# IMPORT REAL CLI FUNCTIONS
+# -------------------------------------------------
+try:
+    from soc_triage_cli import (
+        train_ml_model,
+        watch_csv,
+        watch_wazuh,
+        execute_block_ip,
+        execute_block_user,
+        execute_unblock_ip,
+        execute_unblock_user,
+        blocked_entities,
+        REPORT_FILE_CSV
+    )
+except Exception as e:
+    print("SOC import error:", e)
+
+# -------------------------------------------------
+# WAZUH FALLBACK
+# -------------------------------------------------
+try:
+    from wazuh_integration import fetch_wazuh_alerts
+except Exception:
+    def fetch_wazuh_alerts(limit=50): return []
+
+# -------------------------------------------------
+# FLASK
+# -------------------------------------------------
+app = Flask(__name__, template_folder="templates")
+app.secret_key = os.environ.get("SECRET_KEY", "dev-only-change-me")
+
+# -------------------------------------------------
+# EMAIL CONFIG
+# -------------------------------------------------
+app.config['MAIL_SERVER'] = 'smtp.gmail.com'
+app.config['MAIL_PORT'] = 587
+app.config['MAIL_USE_TLS'] = True
+app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME', '')
+app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD', '')
+
+mail = Mail(app)
+
+# -------------------------------------------------
+# USER DATABASE
+# -------------------------------------------------
+USERS_FILE = "data/users.csv"
+os.makedirs("data", exist_ok=True)
+
+if os.path.exists(USERS_FILE):
+    df = pd.read_csv(USERS_FILE)
+    users_db = dict(zip(df["username"], df["password_hash"]))
+else:
+    users_db = {}
+
+def save_user(username, password_hash):
+    users_db[username] = password_hash
+    df = pd.DataFrame(list(users_db.items()), columns=["username", "password_hash"])
+    df.to_csv(USERS_FILE, index=False)
+
+# -------------------------------------------------
+# LOGIN REQUIRED
+# -------------------------------------------------
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if "user" not in session:
+            return redirect("/login")
+        return f(*args, **kwargs)
+    return decorated
+
+# -------------------------------------------------
+# AUTH
+# -------------------------------------------------
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        username = request.form["username"]  # MUST be email
+        password = request.form["password"]
+        if username in users_db:
+            return render_template("register.html", error="User already exists")
+        save_user(username, generate_password_hash(password))
+        return redirect("/login")
+    return render_template("register.html")
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form["username"]
+        password = request.form["password"]
+
+        if username not in users_db or not check_password_hash(users_db[username], password):
+            return render_template("login.html", error="Invalid username or password")
+
+        # Generate OTP
+        otp = str(random.randint(100000, 999999))
+
+        # Save OTP temporarily
+        session["pending_user"] = username
+        session["otp"] = otp
+        session["otp_time"] = time.time()
+
+        # Send email
+        msg = Message("Your Verification Code",
+                      sender=app.config['MAIL_USERNAME'],
+                      recipients=[username])
+        msg.body = f"Your verification code is: {otp}. It expires in 5 minutes."
+        mail.send(msg)
+
+        return redirect("/2fa")
+
+    return render_template("login.html")
+
+
+@app.route("/2fa", methods=["GET", "POST"])
+def two_factor():
+    if "pending_user" not in session:
+        return redirect("/login")
+
+    if request.method == "POST":
+        code = request.form["code"]
+
+        # Check expiration (5 mins)
+        if time.time() - session.get("otp_time", 0) > 300:
+            session.pop("pending_user", None)
+            session.pop("otp", None)
+            session.pop("otp_time", None)
+            return render_template("2fa.html", error="Code expired. Please login again.")
+
+        if code == session.get("otp"):
+            session["user"] = session["pending_user"]
+            session.pop("pending_user")
+            session.pop("otp")
+            session.pop("otp_time")
+            return redirect("/")
+
+        return render_template("2fa.html", error="Invalid code")
+
+    return render_template("2fa.html")
+
+
+# ✅ NEW: RESEND OTP
+@app.route("/2fa/resend", methods=["POST"])
+def resend_otp():
+    if "pending_user" not in session:
+        return redirect("/login")
+
+    username = session["pending_user"]
+
+    # Generate new OTP
+    otp = str(random.randint(100000, 999999))
+    session["otp"] = otp
+    session["otp_time"] = time.time()
+
+    # Send email
+    msg = Message("Your New Verification Code",
+                  sender=app.config['MAIL_USERNAME'],
+                  recipients=[username])
+    msg.body = f"Your new verification code is: {otp}. It expires in 5 minutes."
+    mail.send(msg)
+
+    return render_template("2fa.html", message="A new code has been sent.")
+
+@app.route("/logout")
+def logout():
+    session.pop("user", None)
+    return redirect("/login")
+
+# -------------------------------------------------
+# HOME
+# -------------------------------------------------
+@app.route("/")
+@login_required
+def home():
+    return render_template("index.html", user=session["user"])
+
+# -------------------------------------------------
+# TRAIN MODEL
+# -------------------------------------------------
+@app.route("/train-model", methods=["POST"])
+@login_required
+def train_model_route():
+    train_ml_model("data/sample_logs.csv")
+    return jsonify({"status": "Training complete"})
+
+# -------------------------------------------------
+# WATCHER THREADS
+# -------------------------------------------------
+watcher_threads = {"csv": None, "wazuh": None}
+
+@app.route("/watch-csv/start", methods=["POST"])
+@login_required
+def start_csv_watch():
+    if watcher_threads["csv"] and watcher_threads["csv"].is_alive():
+        return jsonify({"status": "Already running"})
+    t = threading.Thread(target=watch_csv, args=("data/sample_logs.csv",))
+    t.daemon = True
+    t.start()
+    watcher_threads["csv"] = t
+    return jsonify({"status": "CSV watcher started"})
+
+@app.route("/watch-wazuh/start", methods=["POST"])
+@login_required
+def start_wazuh_watch():
+    if watcher_threads["wazuh"] and watcher_threads["wazuh"].is_alive():
+        return jsonify({"status": "Already running"})
+    t = threading.Thread(target=watch_wazuh)
+    t.daemon = True
+    t.start()
+    watcher_threads["wazuh"] = t
+    return jsonify({"status": "Wazuh watcher started"})
+
+# -------------------------------------------------
+# REPORTS
+# -------------------------------------------------
+@app.route("/report")
+@login_required
+def report():
+    if not os.path.exists(REPORT_FILE_CSV):
+        return jsonify({"error": "Report not found"})
+
+    df = pd.read_csv(REPORT_FILE_CSV)
+
+    if "timestamp" in df.columns:
+        df = df.sort_values(by="timestamp", ascending=False)
+    elif "date" in df.columns:
+        df = df.sort_values(by="date", ascending=False)
+
+    rows = df.to_dict(orient="records")
+    return render_template("report.html", rows=rows)
+
+# -------------------------------------------------
+# CSV LOG VIEW
+# -------------------------------------------------
+@app.route("/logs/csv")
+@login_required
+def view_csv_logs():
+    p = "data/sample_logs.csv"
+    if not os.path.exists(p):
+        return render_template("csv_logs.html", rows=[])
+    df = pd.read_csv(p)
+    return render_template("csv_logs.html", rows=df.to_dict(orient="records"))
+
+# -------------------------------------------------
+# WAZUH LOG VIEW
+# -------------------------------------------------
+@app.route("/logs/wazuh")
+@login_required
+def view_wazuh_logs():
+    logs = fetch_wazuh_alerts(limit=50)
+    return render_template("wazuh_logs.html", logs=logs)
+
+# -------------------------------------------------
+# BLOCK / UNBLOCK
+# -------------------------------------------------
+@app.route("/blocks")
+@login_required
+def view_blocks():
+    return render_template("blocks.html", blocks=blocked_entities)
+
+@app.route("/block/ip", methods=["POST"])
+@login_required
+def block_ip():
+    execute_block_ip(request.form["ip"])
+    return redirect("/blocks")
+
+@app.route("/block/user", methods=["POST"])
+@login_required
+def block_user():
+    execute_block_user(request.form["user"])
+    return redirect("/blocks")
+
+@app.route("/unblock", methods=["POST"])
+@login_required
+def unblock():
+    target = request.form["target"]
+
+    if target in blocked_entities["ips"]:
+        execute_unblock_ip(target)
+
+    if target in blocked_entities["users"]:
+        execute_unblock_user(target)
+
+    return redirect("/blocks")
+
+# -------------------------------------------------
+# ANALYTICS
+# -------------------------------------------------
+@app.route("/analytics")
+@login_required
+def analytics():
+    if not os.path.exists(REPORT_FILE_CSV):
+        return render_template("analytics.html", rows=[])
+    df = pd.read_csv(REPORT_FILE_CSV)
+    return render_template("analytics.html", rows=df.to_dict(orient="records"))
+
+# -------------------------------------------------
+# NOTIFICATIONS
+# -------------------------------------------------
+@app.route("/notifications")
+@login_required
+def notifications():
+    data = {
+        "blocked_count": len(blocked_entities["ips"]) + len(blocked_entities["users"]),
+        "severe_alerts": 0,
+        "escalated_events": 0,
+        "wazuh_running": watcher_threads["wazuh"] is not None and watcher_threads["wazuh"].is_alive(),
+        "csv_running": watcher_threads["csv"] is not None and watcher_threads["csv"].is_alive(),
+        "ml_training": getattr(app, "ml_training", False)
+    }
+
+    if os.path.exists(REPORT_FILE_CSV):
+        df = pd.read_csv(REPORT_FILE_CSV)
+        if "severity" in df.columns:
+            data["severe_alerts"] = df[df["severity"].str.lower() == "critical"].shape[0]
+        if "ml_prediction" in df.columns:
+            data["escalated_events"] = df[df["ml_prediction"] == "high risk"].shape[0]
+
+    return jsonify(data)
+
+# -------------------------------------------------
+# RUN
+# -------------------------------------------------
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
