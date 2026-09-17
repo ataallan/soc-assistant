@@ -23,6 +23,13 @@ from containment import (
     get_mode_label,
 )
 
+from db import (
+    ensure_db_ready,
+    export_triage_to_csv,
+    insert_triage_event,
+    list_triage_events,
+)
+
 # ------------------------------------------------------------
 # UNIFIED TRIAGE REPORT SCHEMA
 # ------------------------------------------------------------
@@ -96,6 +103,7 @@ HIGH_RISK_FILE_CSV = os.path.join(DATA_DIR, "high_risk_events.csv")
 BLOCKED_ENTITIES_FILE = os.path.join(DATA_DIR, "blocked_entities.json")
 
 os.makedirs(DATA_DIR, exist_ok=True)
+ensure_db_ready()
 
 # ------------------------------------------------------------------------
 # BLOCK TRACKER
@@ -219,17 +227,23 @@ def unblock_entity():
 # VIEW REPORT
 # ------------------------------------------------------------------------
 def view_report():
-    if not os.path.exists(REPORT_FILE_CSV):
+    rows = list_triage_events(limit=10)
+    if not rows:
         print("⚠ No report found.")
         return
 
-    df = pd.read_csv(REPORT_FILE_CSV)
-    if df.empty:
-        print("⚠ Report is empty.")
-        return
-
     print("\n📊 Last 10 Triage Entries:")
-    print(df.tail(10).to_string(index=False))
+    df = pd.DataFrame(rows)
+    cols = [c for c in REPORT_FIELDS if c in df.columns]
+    print(df[cols].to_string(index=False) if cols else df.to_string(index=False))
+
+
+def export_report_csv(dest=None):
+    """Export triage events from SQLite to CSV (demos / ML)."""
+    dest = dest or REPORT_FILE_CSV
+    n = export_triage_to_csv(dest)
+    print(f"✅ Exported {n} triage events → {dest}")
+    return n
 
 # ------------------------------------------------------------------------
 # MAIN ANALYSIS PIPELINE (WITH MATCHED ML PREDICTION)
@@ -376,9 +390,15 @@ def analyze_and_predict(log: str, event_type="", description="", username="", ti
 # SAVE REPORT
 # ------------------------------------------------------------------------
 def save_to_reports(result: dict):
-    """Save triage results in CSV & JSONL with unified schema."""
+    """Persist triage to SQLite (source of truth); optionally mirror CSV/JSONL for export."""
     clean_row = normalize_report_row(result)
 
+    try:
+        insert_triage_event(clean_row, source="triage")
+    except Exception as e:
+        print("⚠ Error saving to SQLite:", e)
+
+    # Optional CSV mirror for demo/export compatibility (append-style rewrite)
     try:
         df_new = pd.DataFrame([clean_row])
         if os.path.exists(REPORT_FILE_CSV):
@@ -392,13 +412,13 @@ def save_to_reports(result: dict):
             df_all = df_new
         df_all.to_csv(REPORT_FILE_CSV, index=False)
     except Exception as e:
-        print("⚠ Error saving CSV:", e)
+        print("⚠ Error saving CSV mirror:", e)
 
     try:
         with open(REPORT_FILE_JSONL, "a") as f:
             f.write(json.dumps(clean_row, default=str) + "\n")
     except Exception as e:
-        print("⚠ Error saving JSONL:", e)
+        print("⚠ Error saving JSONL mirror:", e)
 
 # ------------------------------------------------------------------------
 # WATCHERS (stoppable via Event / dashboard Stop buttons)
@@ -566,7 +586,8 @@ def cli_menu():
         print("3. Watch Wazuh Alerts")
         print("4. View Report")
         print("5. Unblock IP/User")
-        print("6. Exit\n")
+        print("6. Export Report CSV")
+        print("7. Exit\n")
 
         choice = input("Enter choice: ").strip()
 
@@ -581,6 +602,8 @@ def cli_menu():
         elif choice == "5":
             unblock_entity()
         elif choice == "6":
+            export_report_csv()
+        elif choice == "7":
             print("👋 Goodbye.")
             break
         else:

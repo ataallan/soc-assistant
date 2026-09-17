@@ -1,22 +1,21 @@
 """
-Containment actions for the Capstone SOC Assistant.
+Containment actions for the AI SOC Assistant.
 
 Modes (CONTAINMENT_MODE in .env):
-  simulated  — default. Persist blocks to local JSON only (demo list).
+  simulated  — default. Persist blocks to SQLite only (demo list).
   dry_run    — log intended actions; do not change the block list.
   stub       — call an optional HTTP stub (CONTAINMENT_STUB_URL) then
                persist locally like simulated. If URL is empty, log a
                stub payload only (still no real firewall).
 
-This is intentionally honest: none of these modes are a production firewall
-or SOAR connector unless you point stub at a real control plane later.
+Blocks and audit live in SQLite (see db.py). Legacy JSON/JSONL files are
+imported once on startup when the DB tables are empty.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -25,11 +24,29 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from db import (  # noqa: E402
+    append_audit,
+    ensure_db_ready,
+    load_blocks,
+    remove_block,
+    save_block,
+)
+
+# Legacy paths kept for migration helpers / docs only
 DATA_DIR = Path("data")
 BLOCKED_FILE = DATA_DIR / "blocked_entities.json"
 AUDIT_FILE = DATA_DIR / "containment_audit.jsonl"
 
 VALID_MODES = {"simulated", "dry_run", "stub"}
+
+_db_ready = False
+
+
+def _ensure_storage() -> None:
+    global _db_ready
+    if not _db_ready:
+        ensure_db_ready()
+        _db_ready = True
 
 
 def get_mode() -> str:
@@ -62,38 +79,60 @@ def _empty() -> Dict[str, list]:
 
 
 def load_blocked() -> Dict[str, list]:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    if not BLOCKED_FILE.exists():
-        return _empty()
+    """Load blocked IPs/users from SQLite."""
     try:
-        data = json.loads(BLOCKED_FILE.read_text(encoding="utf-8"))
-        return {
-            "ips": list(data.get("ips") or []),
-            "users": list(data.get("users") or []),
-        }
+        _ensure_storage()
+        return load_blocks()
     except Exception:
         return _empty()
 
 
 def save_blocked(data: Dict[str, list]) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    BLOCKED_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    """
+    Replace-style save used by older callers.
+
+    Syncs the desired ips/users lists into SQLite (add missing, remove extras).
+    Prefer block_ip / unblock_ip for normal operations.
+    """
+    _ensure_storage()
+    desired_ips = set(str(x).strip() for x in (data.get("ips") or []) if str(x).strip())
+    desired_users = set(str(x).strip() for x in (data.get("users") or []) if str(x).strip())
+    current = load_blocks()
+    mode = get_mode()
+
+    for ip in desired_ips:
+        if ip not in current["ips"]:
+            save_block("ip", ip, mode=mode, note="save_blocked sync")
+    for ip in list(current["ips"]):
+        if ip not in desired_ips:
+            remove_block("ip", ip)
+
+    for user in desired_users:
+        if user not in current["users"]:
+            save_block("user", user, mode=mode, note="save_blocked sync")
+    for user in list(current["users"]):
+        if user not in desired_users:
+            remove_block("user", user)
 
 
-def _audit(event: str, target_type: str, target: str, result: str, extra: Optional[dict] = None) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    row = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "mode": get_mode(),
-        "event": event,
-        "target_type": target_type,
-        "target": target,
-        "result": result,
-    }
+def _audit(
+    event: str,
+    target_type: str,
+    target: str,
+    result: str,
+    extra: Optional[dict] = None,
+) -> None:
+    _ensure_storage()
+    detail: Dict[str, Any] = {"result": result}
     if extra:
-        row["extra"] = extra
-    with AUDIT_FILE.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row) + "\n")
+        detail["extra"] = extra
+    append_audit(
+        event,
+        target_type,
+        target,
+        mode=get_mode(),
+        detail=detail,
+    )
 
 
 def _stub_call(action: str, target_type: str, target: str) -> Dict[str, Any]:
@@ -103,7 +142,7 @@ def _stub_call(action: str, target_type: str, target: str) -> Dict[str, Any]:
         "action": action,
         "target_type": target_type,
         "target": target,
-        "source": "soc_assistant_capstone",
+        "source": "soc_assistant",
     }
     if not url:
         return {"ok": True, "stub": "log_only", "payload": payload}
@@ -141,13 +180,10 @@ def block_ip(ip: str) -> Dict[str, Any]:
             print(msg)
             return {"ok": False, "mode": mode, "message": msg, "changed": False, "stub": stub_info}
 
-    data = load_blocked()
-    changed = ip not in data["ips"]
-    if changed:
-        data["ips"].append(ip)
-        save_blocked(data)
+    _ensure_storage()
+    changed = save_block("ip", ip, mode=mode, note="block_ip")
     _audit("block", "ip", ip, "applied", {"stub": stub_info} if stub_info else None)
-    label = {"simulated":"Simulation","dry_run":"Preview","stub":"Integration"}.get(mode, mode.title())
+    label = {"simulated": "Simulation", "dry_run": "Preview", "stub": "Integration"}.get(mode, mode.title())
     msg = f"[{label}] IP blocked in console: {ip}"
     print(msg)
     return {"ok": True, "mode": mode, "message": msg, "changed": changed, "stub": stub_info}
@@ -172,13 +208,10 @@ def unblock_ip(ip: str) -> Dict[str, Any]:
             _audit("unblock", "ip", ip, "stub_failed", stub_info)
             return {"ok": False, "mode": mode, "message": f"[STUB FAILED] {stub_info}", "changed": False}
 
-    data = load_blocked()
-    changed = ip in data["ips"]
-    if changed:
-        data["ips"].remove(ip)
-        save_blocked(data)
+    _ensure_storage()
+    changed = remove_block("ip", ip)
     _audit("unblock", "ip", ip, "applied", {"stub": stub_info} if stub_info else None)
-    label = {"simulated":"Simulation","dry_run":"Preview","stub":"Integration"}.get(mode, mode.title())
+    label = {"simulated": "Simulation", "dry_run": "Preview", "stub": "Integration"}.get(mode, mode.title())
     msg = f"[{label}] Unblocked IP {ip}"
     print(msg)
     return {"ok": True, "mode": mode, "message": msg, "changed": changed, "stub": stub_info}
@@ -203,13 +236,10 @@ def block_user(user: str) -> Dict[str, Any]:
             _audit("block", "user", user, "stub_failed", stub_info)
             return {"ok": False, "mode": mode, "message": f"[STUB FAILED] {stub_info}", "changed": False}
 
-    data = load_blocked()
-    changed = user not in data["users"]
-    if changed:
-        data["users"].append(user)
-        save_blocked(data)
+    _ensure_storage()
+    changed = save_block("user", user, mode=mode, note="block_user")
     _audit("block", "user", user, "applied", {"stub": stub_info} if stub_info else None)
-    label = {"simulated":"Simulation","dry_run":"Preview","stub":"Integration"}.get(mode, mode.title())
+    label = {"simulated": "Simulation", "dry_run": "Preview", "stub": "Integration"}.get(mode, mode.title())
     msg = f"[{label}] User blocked in console: {user}"
     print(msg)
     return {"ok": True, "mode": mode, "message": msg, "changed": changed, "stub": stub_info}
@@ -234,13 +264,10 @@ def unblock_user(user: str) -> Dict[str, Any]:
             _audit("unblock", "user", user, "stub_failed", stub_info)
             return {"ok": False, "mode": mode, "message": f"[STUB FAILED] {stub_info}", "changed": False}
 
-    data = load_blocked()
-    changed = user in data["users"]
-    if changed:
-        data["users"].remove(user)
-        save_blocked(data)
+    _ensure_storage()
+    changed = remove_block("user", user)
     _audit("unblock", "user", user, "applied", {"stub": stub_info} if stub_info else None)
-    label = {"simulated":"Simulation","dry_run":"Preview","stub":"Integration"}.get(mode, mode.title())
+    label = {"simulated": "Simulation", "dry_run": "Preview", "stub": "Integration"}.get(mode, mode.title())
     msg = f"[{label}] Unblocked user {user}"
     print(msg)
     return {"ok": True, "mode": mode, "message": msg, "changed": changed, "stub": stub_info}

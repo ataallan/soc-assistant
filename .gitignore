@@ -40,3 +40,12 @@ triage_report.jsonl
 
 # Containment audit trail (runtime)
 data/containment_audit.jsonl
+
+# SQLite runtime DB (schema created on startup)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+data/*.db
+data/triage_export.csv
+

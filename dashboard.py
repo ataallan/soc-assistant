@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, redirect, session
+from flask import Flask, render_template, request, jsonify, redirect, session, send_file
 from werkzeug.security import generate_password_hash, check_password_hash
 import threading
 import pandas as pd
@@ -15,6 +15,13 @@ from report_filters import (
     compute_alert_counts,
     filter_report_df,
     normalize_view,
+)
+from db import (
+    count_alerts,
+    ensure_db_ready,
+    export_triage_to_csv,
+    get_db_path,
+    list_triage_events,
 )
 
 # -------------------------------------------------
@@ -108,6 +115,11 @@ def save_user(username, password_hash):
     users_db[username] = password_hash
     df = pd.DataFrame(list(users_db.items()), columns=["username", "password_hash"])
     df.to_csv(USERS_FILE, index=False)
+
+# -------------------------------------------------
+# SQLITE STORAGE (source of truth)
+# -------------------------------------------------
+ensure_db_ready()
 
 # -------------------------------------------------
 # LOGIN REQUIRED
@@ -294,29 +306,27 @@ def stop_wazuh_watch():
 @login_required
 def report():
     view, view_label = normalize_view(request.args.get("view"))
-
-    if not os.path.exists(REPORT_FILE_CSV):
-        return render_template(
-            "report.html",
-            rows=[],
-            view=view,
-            view_label=view_label,
-        )
-
-    df = pd.read_csv(REPORT_FILE_CSV)
-
-    if "timestamp" in df.columns:
-        df = df.sort_values(by="timestamp", ascending=False)
-    elif "date" in df.columns:
-        df = df.sort_values(by="date", ascending=False)
-
-    df = filter_report_df(df, view)
-    rows = df.to_dict(orient="records")
+    rows = list_triage_events(view=view)
     return render_template(
         "report.html",
         rows=rows,
         view=view,
         view_label=view_label,
+    )
+
+
+@app.route("/report/export")
+@login_required
+def report_export():
+    """Download triage events as CSV (from SQLite)."""
+    view, _ = normalize_view(request.args.get("view"))
+    out_path = os.path.join("data", "triage_export.csv")
+    export_triage_to_csv(out_path, view=view)
+    return send_file(
+        out_path,
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name="triage_report.csv",
     )
 
 # -------------------------------------------------
@@ -391,10 +401,8 @@ def unblock():
 @app.route("/analytics")
 @login_required
 def analytics():
-    if not os.path.exists(REPORT_FILE_CSV):
-        return render_template("analytics.html", rows=[])
-    df = pd.read_csv(REPORT_FILE_CSV)
-    return render_template("analytics.html", rows=df.to_dict(orient="records"))
+    rows = list_triage_events(view="total")
+    return render_template("analytics.html", rows=rows)
 
 # -------------------------------------------------
 # NOTIFICATIONS
@@ -413,12 +421,7 @@ def notifications():
         "csv_running": watcher_threads["csv"] is not None and watcher_threads["csv"].is_alive(),
         "ml_training": getattr(app, "ml_training", False),
     }
-
-    if os.path.exists(REPORT_FILE_CSV):
-        df = pd.read_csv(REPORT_FILE_CSV)
-        counts = compute_alert_counts(df)
-        data.update(counts)
-
+    data.update(count_alerts())
     return jsonify(data)
 
 # -------------------------------------------------

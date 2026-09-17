@@ -30,8 +30,8 @@ flowchart LR
   end
 
   subgraph Outputs
-    RPT[triage_report.csv / jsonl]
-    BLK[blocked_entities.json<br/>simulated containment]
+    RPT[SQLite triage_events<br/>+ CSV export]
+    BLK[SQLite containment_blocks<br/>simulated containment]
     MAIL[Email / OTP alerts]
   end
 
@@ -62,7 +62,8 @@ flowchart LR
 | `soc_triage_cli.py` | CLI: train, watch CSV/Wazuh, report, unblock |
 | `wazuh_integration.py` | JWT auth, endpoint probe/cache, structured alerts |
 | `dashboard.py` | Login + email OTP, watchers, reports, Wazuh table |
-| `containment.py` | Block/unblock with `simulated` / `dry_run` / `stub` modes + audit log |
+| `containment.py` | Block/unblock with `simulated` / `dry_run` / `stub` modes + SQLite audit |
+| `db.py` | SQLite schema, migration, export helpers |
 | `templates/` | UI pages |
 | `data/sample_logs.csv` | Labeled demo dataset |
 
@@ -73,9 +74,9 @@ Set `CONTAINMENT_MODE` in `.env`:
 
 | Mode | Behavior |
 | --- | --- |
-| `simulated` (default) | Update `data/blocked_entities.json` only |
-| `dry_run` | Append `data/containment_audit.jsonl` only — no list changes |
-| `stub` | Optional POST to `CONTAINMENT_STUB_URL`, then update local JSON |
+| `simulated` (default) | Update SQLite `containment_blocks` only |
+| `dry_run` | Append SQLite `containment_audit` only — no list changes |
+| `stub` | Optional POST to `CONTAINMENT_STUB_URL`, then update SQLite |
 
 None of these are a production firewall unless you intentionally point `stub` at a real control-plane API.
 
@@ -87,3 +88,7 @@ None of these are a production firewall unless you intentionally point `stub` at
 
 - Secrets (`WAZUH_PASS`, mail app passwords, `SECRET_KEY`) come from `.env` — never commit `.env`.
 - Dashboard `debug=True` / bind-all interfaces are for local demo only.
+
+## Storage
+
+See [STORAGE.md](STORAGE.md) for SQLite paths, legacy migration, and Postgres notes.
