@@ -85,11 +85,12 @@ Without a password, Wazuh calls will fail gracefully and return no alerts.
 
 ## Known limitations
 
-- **Import / name mismatches:** The dashboard imports symbols such as `train_ml_model`, `watch_csv`, `watch_wazuh`, and `blocked_entities` from `soc_triage_cli`. If you rename CLI exports without updating the dashboard (or vice versa), the UI falls back with `SOC import error` and related routes break. Full alignment may need a larger refactor.
-- **`apply_triage.py` directory:** On some Capstone checkouts, `apply_triage.py` is a **directory** (misnamed package folder), not a runnable script. Prefer `soc_triage_cli.py` / `triage_engine.py` instead of treating it as an entrypoint.
-- **Dashboard bind / debug:** `dashboard.py` runs with `debug=True` and `host="0.0.0.0"` for local demos. That exposes the app on all interfaces with the Flask debugger — use only on trusted networks, or change to `host="127.0.0.1"` and `debug=False` for safer local use.
-- **Templates / static assets:** A complete UI needs the `templates/` (and any `static/`) folders from the original Desktop project; this public repo focuses on cleaned Python sources and sample data.
-- **Email OTP:** Registration expects an email username; SMTP must be configured or login 2FA email will fail.
+- **Wiring fragility:** The dashboard imports CLI helpers (`train_ml_model`, `watch_csv`, `watch_wazuh`, block helpers, `blocked_entities`, `REPORT_FILE_CSV`). If those names drift again, the UI prints `SOC import error` and related actions stop working.
+- **`apply_triage.py` directory:** On the Capstone Desktop copy, `apply_triage.py` is a **folder**, not a script. Use `soc_triage_cli.py` as the CLI entrypoint.
+- **Demo bind / debug:** `dashboard.py` uses `debug=True` and `host="0.0.0.0"` for local demos only — do not expose that on an untrusted network.
+- **Blocking is simulated:** Block/unblock updates local JSON state; it does not change firewall rules.
+- **Academic / demo scope:** Treat this as a learning project, not production SOC automation.
+
 
 ## License
 
