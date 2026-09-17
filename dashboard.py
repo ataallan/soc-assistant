@@ -11,6 +11,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from containment import get_mode, get_mode_label, get_ui_notice, load_blocked
+from report_filters import (
+    compute_alert_counts,
+    filter_report_df,
+    normalize_view,
+)
 
 # -------------------------------------------------
 # EMAIL (Flask-Mail)
@@ -288,8 +293,15 @@ def stop_wazuh_watch():
 @app.route("/report")
 @login_required
 def report():
+    view, view_label = normalize_view(request.args.get("view"))
+
     if not os.path.exists(REPORT_FILE_CSV):
-        return jsonify({"error": "Report not found"})
+        return render_template(
+            "report.html",
+            rows=[],
+            view=view,
+            view_label=view_label,
+        )
 
     df = pd.read_csv(REPORT_FILE_CSV)
 
@@ -298,8 +310,14 @@ def report():
     elif "date" in df.columns:
         df = df.sort_values(by="date", ascending=False)
 
+    df = filter_report_df(df, view)
     rows = df.to_dict(orient="records")
-    return render_template("report.html", rows=rows)
+    return render_template(
+        "report.html",
+        rows=rows,
+        view=view,
+        view_label=view_label,
+    )
 
 # -------------------------------------------------
 # CSV LOG VIEW
@@ -384,21 +402,22 @@ def analytics():
 @app.route("/notifications")
 @login_required
 def notifications():
+    blocks = load_blocked()
     data = {
-        "blocked_count": len(load_blocked()["ips"]) + len(load_blocked()["users"]),
+        "blocked_count": len(blocks.get("ips", [])) + len(blocks.get("users", [])),
         "severe_alerts": 0,
         "escalated_events": 0,
+        "total_alerts": 0,
+        "report_rows": 0,
         "wazuh_running": watcher_threads["wazuh"] is not None and watcher_threads["wazuh"].is_alive(),
         "csv_running": watcher_threads["csv"] is not None and watcher_threads["csv"].is_alive(),
-        "ml_training": getattr(app, "ml_training", False)
+        "ml_training": getattr(app, "ml_training", False),
     }
 
     if os.path.exists(REPORT_FILE_CSV):
         df = pd.read_csv(REPORT_FILE_CSV)
-        if "severity" in df.columns:
-            data["severe_alerts"] = df[df["severity"].str.lower() == "critical"].shape[0]
-        if "ml_prediction" in df.columns:
-            data["escalated_events"] = df[df["ml_prediction"] == "high risk"].shape[0]
+        counts = compute_alert_counts(df)
+        data.update(counts)
 
     return jsonify(data)
 

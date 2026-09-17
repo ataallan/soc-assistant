@@ -45,9 +45,16 @@
     .alert-badge {
         font-weight: 600;
         margin-left: 10px;
-        padding: 2px 6px;
+        padding: 2px 8px;
         border-radius: 4px;
         font-size: 13px;
+        text-decoration: none;
+        display: inline-block;
+        cursor: pointer;
+    }
+    .alert-badge:hover {
+        text-decoration: underline;
+        filter: brightness(1.08);
     }
     .badge-total { background-color: #6c757d; color: white; }
     .badge-severe { background-color: #dc3545; color: white; }
@@ -90,8 +97,10 @@
             mlElem.textContent = (data.ml_training ? "Running" : "Idle");
             mlElem.className = "status-indicator " + (data.ml_training ? "status-running" : "status-idle");
 
-            // Top bar alerts
-            document.getElementById("alert-count-total").textContent = data.blocked_count + data.severe_alerts + data.escalated_events;
+            // Top bar alerts — Total = triage report row count
+            const total = (data.total_alerts != null) ? data.total_alerts
+                : (data.report_rows != null ? data.report_rows : 0);
+            document.getElementById("alert-count-total").textContent = total;
             document.getElementById("alert-count-severe").textContent = data.severe_alerts;
             document.getElementById("alert-count-escalated").textContent = data.escalated_events;
 
@@ -159,9 +168,9 @@
     <div class="d-flex align-items-center justify-content-between mb-2">
         <h2 class="section-title">AI-Powered SOC Assistant</h2>
         <div>
-            <span class="alert-badge badge-total">Total: <span id="alert-count-total">0</span></span>
-            <span class="alert-badge badge-severe">Severe: <span id="alert-count-severe">0</span></span>
-            <span class="alert-badge badge-escalated">Escalated: <span id="alert-count-escalated">0</span></span>
+            <a href="/report?view=total" class="alert-badge badge-total" title="All triage rows">Total: <span id="alert-count-total">0</span></a>
+            <a href="/report?view=severe" id="badge-severe" class="alert-badge badge-severe" title="High and critical severity">Severe: <span id="alert-count-severe">0</span></a>
+            <a href="/report?view=escalated" class="alert-badge badge-escalated" title="Escalate recommendations">Escalated: <span id="alert-count-escalated">0</span></a>
         </div>
     </div>
     <p class="subtitle">Welcome, {{ user }} — Security Operations Dashboard</p>

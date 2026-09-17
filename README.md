@@ -7,8 +7,11 @@ Allan Munyira's capstone project: an **AI-assisted SOC triage** toolkit that com
 - Train an ML severity model from sample security logs
 - CLI menu to train, watch CSV/Wazuh feeds, view reports, and manage blocks
 - Flask dashboard for training, watchers, reports, blocks, and analytics
+- Clickable Total / Severe / Escalated badges that open filtered triage views
+- Muteable severe-alert beep + flash on the floating Alerts control
 - Email notifications for high/critical events (Gmail SMTP / App Password)
 - Optional Wazuh 4.x API alert fetch
+- Analyst labeling template — see [docs/LABELING.md](docs/LABELING.md)
 
 
 
@@ -58,6 +61,10 @@ pytest -q
 ```
 
 Covers severity rules, Wazuh alert parsing, a **mocked Wazuh API client** (no live network), NLP helpers, and simulated containment. Latest quiet run is saved under [docs/screenshots/07-pytest.txt](docs/screenshots/07-pytest.txt).
+
+## Labeling new alerts
+
+To grow the training set with human-reviewed severity labels, copy `data/labeling_template.csv`, fill `severity`, merge into `data/sample_logs.csv` (or train on the labeled file), then retrain and run `evaluate_model.py`. Full steps: [docs/LABELING.md](docs/LABELING.md).
 
 ## Model evaluation
 
@@ -141,6 +148,9 @@ Automatic IP/user blocks from triage **require rule + ML agreement** (or rules m
 | `wazuh_integration.py` | Wazuh API client |
 | `nlp_utils.py` | IP/user extraction helpers |
 | `data/sample_logs.csv` | Sample training / watch data |
+| `data/labeling_template.csv` | Analyst labeling CSV template |
+| `docs/LABELING.md` | How to label, merge, retrain, evaluate |
+| `report_filters.py` | Dashboard report view filters + alert counts |
 
 ## Known limitations
 

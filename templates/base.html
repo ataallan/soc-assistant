@@ -81,6 +81,33 @@
             box-shadow: 0 4px 10px rgba(0,0,0,0.4);
         }
 
+        .notif-controls {
+            position: fixed;
+            bottom: 25px;
+            right: 150px;
+            z-index: 9999;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .silence-btn {
+            background: #343a40;
+            color: #eee;
+            border: 1px solid #555;
+            border-radius: 20px;
+            padding: 8px 14px;
+            font-size: 13px;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+        }
+        .silence-btn:hover {
+            background: #495057;
+        }
+        .silence-btn.muted {
+            background: #6c757d;
+            border-color: #868e96;
+        }
+
         #notifList {
             list-style: none;
             padding-left: 0;
@@ -118,9 +145,10 @@
     </div>
 
     <div id="notifSummary">
-        <p><span id="notifCriticalCount">0</span> Critical Alerts</p>
+        <p><span id="notifCriticalCount">0</span> Severe Alerts</p>
         <p><span id="notifHighCount">0</span> Escalations</p>
         <p><span id="notifBlockedCount">0</span> Containment</p>
+        <p class="mb-2"><button type="button" id="panelSilenceBtn" class="btn btn-sm btn-outline-light">Silence</button></p>
     </div>
 
     <div id="notifDetails">
@@ -129,11 +157,15 @@
     </div>
 </div>
 
-<!-- Floating toggle button -->
+<!-- Floating mute + alerts -->
+<div class="notif-controls">
+    <button type="button" id="silenceAlertsBtn" class="silence-btn" title="Stop sound and flashing">Silence</button>
+</div>
 <button id="openNotifBtn" class="notif-button">🔔 Alerts</button>
 
-<!-- SOUND -->
-<audio id="alertSound">
+<!-- SOUND (optional file; Web Audio fallback always available) -->
+<audio id="alertSound" preload="auto">
+    <source src="/static/sounds/alert.wav" type="audio/wav">
     <source src="/static/sounds/alert.mp3" type="audio/mpeg">
 </audio>
 
@@ -234,59 +266,170 @@
 
     /* -------------------- ADVANCED NOTIFICATION ENGINE -------------------- */
 
-    let lastCriticalCount = 0;
+    const MUTE_KEY = "soc_alert_muted";
+    let lastSevereCount = 0;
     let recentAlerts = [];
+    let audioCtx = null;
+    let fileSoundOk = null;
+
+    function isMuted() {
+        return localStorage.getItem(MUTE_KEY) === "1";
+    }
+
+    function updateMuteButtons() {
+        const muted = isMuted();
+        const label = muted ? "Unmute" : "Silence";
+        ["silenceAlertsBtn", "panelSilenceBtn"].forEach(id => {
+            const btn = document.getElementById(id);
+            if (!btn) return;
+            btn.textContent = label;
+            btn.classList.toggle("muted", muted);
+        });
+    }
+
+    function stopAlertEffects() {
+        const btn = document.getElementById("openNotifBtn");
+        if (btn) btn.classList.remove("blink-alert");
+        const severe = document.getElementById("badge-severe");
+        if (severe) severe.classList.remove("blink-alert");
+        const audio = document.getElementById("alertSound");
+        if (audio) {
+            try { audio.pause(); audio.currentTime = 0; } catch (e) {}
+        }
+    }
+
+    function setMuted(muted) {
+        if (muted) {
+            localStorage.setItem(MUTE_KEY, "1");
+            stopAlertEffects();
+        } else {
+            localStorage.removeItem(MUTE_KEY);
+        }
+        updateMuteButtons();
+    }
+
+    function playWebAudioBeep() {
+        try {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (!Ctx) return;
+            if (!audioCtx) audioCtx = new Ctx();
+            if (audioCtx.state === "suspended") audioCtx.resume();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = "sine";
+            osc.frequency.value = 880;
+            gain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.25, audioCtx.currentTime + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.22);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.25);
+        } catch (e) {
+            console.warn("Web Audio beep failed", e);
+        }
+    }
+
+    function playAlertSound() {
+        const audio = document.getElementById("alertSound");
+        if (!audio) {
+            playWebAudioBeep();
+            return;
+        }
+        if (fileSoundOk === false) {
+            playWebAudioBeep();
+            return;
+        }
+        try {
+            audio.currentTime = 0;
+            const p = audio.play();
+            if (p && typeof p.then === "function") {
+                p.then(() => { fileSoundOk = true; })
+                 .catch(() => {
+                     fileSoundOk = false;
+                     playWebAudioBeep();
+                 });
+            }
+        } catch (e) {
+            fileSoundOk = false;
+            playWebAudioBeep();
+        }
+    }
+
+    function startFlash() {
+        const btn = document.getElementById("openNotifBtn");
+        if (btn) btn.classList.add("blink-alert");
+        const severe = document.getElementById("badge-severe");
+        if (severe) severe.classList.add("blink-alert");
+    }
 
     function refreshNotifications() {
         fetch("/notifications")
             .then(r => r.json())
             .then(data => {
-
-                // Update summary counts
                 document.getElementById("notifCriticalCount").innerText = data.severe_alerts;
                 document.getElementById("notifHighCount").innerText = data.escalated_events;
                 document.getElementById("notifBlockedCount").innerText = data.blocked_count;
 
-                // Sound + blinking for NEW critical alerts
-                if (data.severe_alerts > lastCriticalCount) {
-                    document.getElementById("alertSound").play();
-                    document.getElementById("openNotifBtn").classList.add("blink-alert");
+                const severe = data.severe_alerts || 0;
+                const increased = severe > lastSevereCount;
+                const muted = isMuted();
 
-                    setTimeout(() => {
-                        document.getElementById("openNotifBtn").classList.remove("blink-alert");
-                    }, 12000);
+                if (muted) {
+                    stopAlertEffects();
+                } else {
+                    if (increased) {
+                        playAlertSound();  // once per increase only
+                    }
+                    if (severe > 0) {
+                        startFlash();  // keep flashing until Silence / panel open
+                    } else {
+                        stopAlertEffects();
+                    }
                 }
 
-                lastCriticalCount = data.severe_alerts;
+                lastSevereCount = severe;
 
-                // Add new event to list if present
                 if (data.latest_event) {
                     recentAlerts.unshift(data.latest_event);
                     if (recentAlerts.length > 10) recentAlerts.pop();
                 }
 
-                // Render list UI
                 let html = "";
                 recentAlerts.forEach(e => {
-                    let cls = e.severity === "critical" ? "critical-li" : "";
+                    let cls = (String(e.severity || "").toLowerCase() === "critical"
+                        || String(e.severity || "").toLowerCase() === "high") ? "critical-li" : "";
                     html += `<li class="${cls}">
-                                <strong>[${e.severity.toUpperCase()}]</strong> ${e.description}
+                                <strong>[${String(e.severity || "info").toUpperCase()}]</strong> ${e.description || ""}
                              </li>`;
                 });
                 document.getElementById("notifList").innerHTML = html;
-            });
+            })
+            .catch(err => console.warn("notifications poll failed", err));
     }
 
     // Poll every 3 seconds
     setInterval(refreshNotifications, 3000);
+    updateMuteButtons();
     refreshNotifications();
 
-    // Slide panel controls
-    document.getElementById("openNotifBtn").onclick = () => {
+    function openPanelAndQuiet() {
         document.getElementById("advNotificationPanel").classList.add("visible");
-    };
+        stopAlertEffects();
+    }
+
+    document.getElementById("openNotifBtn").onclick = openPanelAndQuiet;
     document.getElementById("notifCloseBtn").onclick = () => {
         document.getElementById("advNotificationPanel").classList.remove("visible");
+    };
+
+    function toggleMute() {
+        setMuted(!isMuted());
+    }
+    document.getElementById("silenceAlertsBtn").onclick = toggleMute;
+    document.getElementById("panelSilenceBtn").onclick = () => {
+        setMuted(true);
+        stopAlertEffects();
     };
 </script>
 
