@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from containment import get_mode, get_mode_label, load_blocked
+
 # -------------------------------------------------
 # EMAIL (Flask-Mail)
 # -------------------------------------------------
@@ -300,7 +302,15 @@ def view_wazuh_logs():
 @app.route("/blocks")
 @login_required
 def view_blocks():
-    return render_template("blocks.html", blocks=blocked_entities)
+    blocks = load_blocked()
+    blocked_entities.clear()
+    blocked_entities.update(blocks)
+    return render_template(
+        "blocks.html",
+        blocks=blocks,
+        containment_mode=get_mode(),
+        containment_label=get_mode_label(),
+    )
 
 @app.route("/block/ip", methods=["POST"])
 @login_required
@@ -345,7 +355,7 @@ def analytics():
 @login_required
 def notifications():
     data = {
-        "blocked_count": len(blocked_entities["ips"]) + len(blocked_entities["users"]),
+        "blocked_count": len(load_blocked()["ips"]) + len(load_blocked()["users"]),
         "severe_alerts": 0,
         "escalated_events": 0,
         "wazuh_running": watcher_threads["wazuh"] is not None and watcher_threads["wazuh"].is_alive(),

@@ -62,8 +62,22 @@ flowchart LR
 | `soc_triage_cli.py` | CLI: train, watch CSV/Wazuh, report, unblock |
 | `wazuh_integration.py` | JWT auth, endpoint probe/cache, structured alerts |
 | `dashboard.py` | Login + email OTP, watchers, reports, Wazuh table |
+| `containment.py` | Block/unblock with `simulated` / `dry_run` / `stub` modes + audit log |
 | `templates/` | UI pages |
 | `data/sample_logs.csv` | Labeled demo dataset |
+
+
+## Containment modes
+
+Set `CONTAINMENT_MODE` in `.env`:
+
+| Mode | Behavior |
+| --- | --- |
+| `simulated` (default) | Update `data/blocked_entities.json` only |
+| `dry_run` | Append `data/containment_audit.jsonl` only — no list changes |
+| `stub` | Optional POST to `CONTAINMENT_STUB_URL`, then update local JSON |
+
+None of these are a production firewall unless you intentionally point `stub` at a real control-plane API.
 
 ## Containment note (scope)
 

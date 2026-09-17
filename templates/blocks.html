@@ -24,9 +24,12 @@
 
     <h2 class="mb-3">Blocked IPs &amp; Users</h2>
     <div class="alert alert-warning" role="status">
-        <strong>Simulated containment.</strong>
-        Entries are stored in local JSON for this Capstone demo.
-        They do <em>not</em> change a live firewall, Wazuh active response, or EDR policy.
+        <strong>Containment mode:</strong> {{ containment_label or "Simulated containment (local JSON only)" }}
+        <div class="small mt-1">
+            Default is <code>simulated</code> (local JSON). Use <code>dry_run</code> to audit without changing the list,
+            or <code>stub</code> to POST to <code>CONTAINMENT_STUB_URL</code> (optional) then update the local list.
+            This Capstone build does <em>not</em> change a live firewall/EDR unless you point the stub at a real control plane.
+        </div>
     </div>
 
     <div class="row">

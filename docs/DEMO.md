@@ -74,7 +74,9 @@ Use the dashboard **CSV logs / Start CSV Watcher / Report**, or CLI option **Wat
 
 ## Demo C — Simulated containment (45 sec)
 
-Open **Blocked Entities**.
+Open **Blocked Entities** and point at the mode banner (`CONTAINMENT_MODE` in `.env`).
+
+Optionally set `CONTAINMENT_MODE=dry_run`, block an IP, and show `data/containment_audit.jsonl` with no list change — then switch back to `simulated`.
 
 Point at the yellow banner:
 

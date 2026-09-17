@@ -13,6 +13,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from containment import (
+    execute_block_ip as _contain_block_ip,
+    execute_block_user as _contain_block_user,
+    execute_unblock_ip as _contain_unblock_ip,
+    execute_unblock_user as _contain_unblock_user,
+    load_blocked,
+    get_mode_label,
+)
+
 # ------------------------------------------------------------
 # UNIFIED TRIAGE REPORT SCHEMA
 # ------------------------------------------------------------
@@ -70,16 +79,12 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # ------------------------------------------------------------------------
 # BLOCK TRACKER
 # ------------------------------------------------------------------------
-blocked_entities = {"ips": [], "users": []}
-if os.path.exists(BLOCKED_ENTITIES_FILE):
-    try:
-        blocked_entities = json.load(open(BLOCKED_ENTITIES_FILE))
-    except:
-        blocked_entities = {"ips": [], "users": []}
+blocked_entities = load_blocked()
 
 def save_blocked_entities():
-    with open(BLOCKED_ENTITIES_FILE, "w") as f:
-        json.dump(blocked_entities, f, indent=4)
+    from containment import save_blocked
+    save_blocked(blocked_entities)
+
 
 # ------------------------------------------------------------------------
 # EMAIL SETTINGS
@@ -142,28 +147,32 @@ def load_model_once():
 # BLOCKING OPERATIONS
 # ------------------------------------------------------------------------
 def execute_block_ip(ip: str):
-    print(f"🛑 SIMULATED BLOCK IP: {ip} (local JSON only — not a live firewall)")
-    if ip not in blocked_entities["ips"]:
-        blocked_entities["ips"].append(ip)
-        save_blocked_entities()
+    result = _contain_block_ip(ip)
+    blocked_entities.clear()
+    blocked_entities.update(load_blocked())
+    return result
+
 
 def execute_block_user(user: str):
-    print(f"🛑 SIMULATED BLOCK USER: {user} (local JSON only — not a live firewall)")
-    if user not in blocked_entities["users"]:
-        blocked_entities["users"].append(user)
-        save_blocked_entities()
+    result = _contain_block_user(user)
+    blocked_entities.clear()
+    blocked_entities.update(load_blocked())
+    return result
+
 
 def execute_unblock_ip(ip: str):
-    print(f"♻️ SIMULATED UNBLOCK IP: {ip} (local JSON only)")
-    if ip in blocked_entities["ips"]:
-        blocked_entities["ips"].remove(ip)
-        save_blocked_entities()
+    result = _contain_unblock_ip(ip)
+    blocked_entities.clear()
+    blocked_entities.update(load_blocked())
+    return result
+
 
 def execute_unblock_user(user: str):
-    print(f"♻️ SIMULATED UNBLOCK USER: {user} (local JSON only)")
-    if user in blocked_entities["users"]:
-        blocked_entities["users"].remove(user)
-        save_blocked_entities()
+    result = _contain_unblock_user(user)
+    blocked_entities.clear()
+    blocked_entities.update(load_blocked())
+    return result
+
 
 # ------------------------------------------------------------------------
 # UNBLOCK MENU
