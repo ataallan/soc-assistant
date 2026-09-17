@@ -25,6 +25,8 @@ try:
         train_ml_model,
         watch_csv,
         watch_wazuh,
+        stop_csv_watcher,
+        stop_wazuh_watcher,
         execute_block_ip,
         execute_block_user,
         execute_unblock_ip,
@@ -236,22 +238,49 @@ watcher_threads = {"csv": None, "wazuh": None}
 def start_csv_watch():
     if watcher_threads["csv"] and watcher_threads["csv"].is_alive():
         return jsonify({"status": "Already running"})
-    t = threading.Thread(target=watch_csv, args=("data/sample_logs.csv",))
-    t.daemon = True
+    t = threading.Thread(
+        target=watch_csv,
+        kwargs={"file_path": "data/sample_logs.csv"},
+        daemon=True,
+    )
     t.start()
     watcher_threads["csv"] = t
     return jsonify({"status": "CSV watcher started"})
+
+
+@app.route("/watch-csv/stop", methods=["POST"])
+@login_required
+def stop_csv_watch():
+    stop_csv_watcher()
+    t = watcher_threads.get("csv")
+    if t is not None and t.is_alive():
+        t.join(timeout=2.0)
+    if t is not None and not t.is_alive():
+        watcher_threads["csv"] = None
+    return jsonify({"status": "CSV watcher stopped"})
+
 
 @app.route("/watch-wazuh/start", methods=["POST"])
 @login_required
 def start_wazuh_watch():
     if watcher_threads["wazuh"] and watcher_threads["wazuh"].is_alive():
         return jsonify({"status": "Already running"})
-    t = threading.Thread(target=watch_wazuh)
-    t.daemon = True
+    t = threading.Thread(target=watch_wazuh, daemon=True)
     t.start()
     watcher_threads["wazuh"] = t
     return jsonify({"status": "Wazuh watcher started"})
+
+
+@app.route("/watch-wazuh/stop", methods=["POST"])
+@login_required
+def stop_wazuh_watch():
+    stop_wazuh_watcher()
+    t = watcher_threads.get("wazuh")
+    if t is not None and t.is_alive():
+        t.join(timeout=2.0)
+    if t is not None and not t.is_alive():
+        watcher_threads["wazuh"] = None
+    return jsonify({"status": "Wazuh watcher stopped"})
 
 # -------------------------------------------------
 # REPORTS

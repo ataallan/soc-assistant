@@ -3,24 +3,18 @@ import joblib
 import re
 import pandas as pd
 from nlp_utils import extract_ip, extract_user
-from datetime import datetime
-import socket
-import struct
 from scipy.sparse import hstack
+import numpy as np
 
 MODEL_FILE = "soc_model.pkl"
 VECTORIZER_FILE = "vectorizer.pkl"
 SCALER_FILE = "scaler.pkl"
 LABEL_ENCODER_FILE = "label_encoder.pkl"
 
-# -------------------- Helper Functions --------------------
+# If ML max probability is below this, prefer rule-based severity.
+ML_CONFIDENCE_THRESHOLD = 0.55
 
-def ip_to_int(ip):
-    """Convert IPv4 string to integer."""
-    try:
-        return struct.unpack("!I", socket.inet_aton(ip))[0]
-    except:
-        return 0
+# -------------------- Helper Functions --------------------
 
 def load_ml_model():
     """Load trained ML model and preprocessing objects."""
@@ -90,57 +84,80 @@ def rule_based_triage(log: str) -> str:
 
 # -------------------- ML-based triage --------------------
 
-def ml_predict_severity(event_type="", description="", username="", timestamp=None, source_ip="") -> str:
-    """Predict severity using ML model."""
-    if ML_MODEL is None:
-        return None  # fallback to rule-based
+def _hour_from_timestamp(timestamp) -> float:
+    if timestamp is None:
+        return 0.0
+    try:
+        ts = pd.to_datetime(timestamp, errors="coerce", utc=True)
+        if pd.isna(ts):
+            return 0.0
+        return float(ts.hour)
+    except Exception:
+        return 0.0
 
-    # Prepare text
+
+def ml_predict_severity(event_type="", description="", username="", timestamp=None, source_ip=""):
+    """Predict severity using ML model.
+
+    Returns (severity, confidence) or (None, 0.0) if model unavailable.
+    Confidence is max predicted class probability when available.
+    """
+    if ML_MODEL is None or VECTORIZER is None or SCALER is None or LABEL_ENCODER is None:
+        return None, 0.0
+
     text = f"{event_type} {description} {username}"
-
-    # Vectorize text
     X_text_vec = VECTORIZER.transform([text])
 
-    # Numeric features
-    if timestamp is None:
-        timestamp_num = 0
-    else:
-        try:
-            timestamp_num = int(pd.to_datetime(timestamp).timestamp())
-        except:
-            timestamp_num = 0
+    hour = _hour_from_timestamp(timestamp)
+    X_numeric_scaled = SCALER.transform(np.array([[hour]], dtype=float))
 
-    source_ip_num = ip_to_int(source_ip)
-
-    X_numeric_scaled = SCALER.transform([[timestamp_num, source_ip_num]])
-
-    # Combine features
     X_combined = hstack([X_text_vec, X_numeric_scaled])
 
-    # Predict
     y_pred = ML_MODEL.predict(X_combined)
     severity = LABEL_ENCODER.inverse_transform(y_pred)[0]
-    return severity
+
+    confidence = 0.0
+    if hasattr(ML_MODEL, "predict_proba"):
+        try:
+            proba = ML_MODEL.predict_proba(X_combined)[0]
+            confidence = float(np.max(proba))
+        except Exception:
+            confidence = 0.0
+
+    return severity, confidence
 
 # -------------------- Main analysis --------------------
 
 def analyze_log(log: str, event_type="", description="", username="", timestamp=None, source_ip="") -> dict:
-    """Returns structured analysis: log, ip, user, severity, recommendation"""
+    """Returns structured analysis: log, ip, user, severity, recommendation.
+
+    Hybrid policy (small, safety-oriented):
+    - Rules saying ``critical`` always win.
+    - If ML is missing or confidence < threshold, use rule severity.
+    - Otherwise use ML severity.
+    """
 
     try:
         ip = extract_ip(log) if not source_ip else source_ip
-    except:
+    except Exception:
         ip = source_ip or None
 
     try:
         user = extract_user(log) if not username else username
-    except:
+    except Exception:
         user = username or None
 
-    # ML prediction (fallback to rule-based)
-    severity = ml_predict_severity(event_type, description, username, timestamp, ip)
-    if severity is None:
-        severity = classify_severity(log)
+    rule_severity = classify_severity(log)
+    ml_severity, ml_confidence = ml_predict_severity(
+        event_type, description, username, timestamp, ip
+    )
+
+    if rule_severity == "critical":
+        severity = "critical"
+    elif ml_severity is None or ml_confidence < ML_CONFIDENCE_THRESHOLD:
+        severity = rule_severity
+    else:
+        severity = ml_severity
 
     recommendation = rule_based_triage(log)
 
@@ -149,5 +166,7 @@ def analyze_log(log: str, event_type="", description="", username="", timestamp=
         "ip": ip,
         "user": user,
         "severity": severity,
-        "recommendation": recommendation
+        "recommendation": recommendation,
+        "ml_confidence": ml_confidence,
+        "rule_severity": rule_severity,
     }

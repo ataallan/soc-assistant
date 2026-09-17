@@ -1,6 +1,6 @@
 # Model evaluation report
 
-Generated: **2026-09-17 18:47 UTC**
+Generated: **2026-09-17 18:59 UTC**
 
 ## Dataset
 
@@ -8,6 +8,7 @@ Generated: **2026-09-17 18:47 UTC**
 - Rows: **111**
 - Hold-out: **30%** test / **70%** train (`random_state=42`, stratified when possible)
 - Label column: `severity`
+- Selected estimator (CV on train): **logreg** (train CV macro F1=1.000)
 
 ### Class distribution (full dataset)
 
@@ -60,9 +61,10 @@ python evaluate_model.py
 ## Notes / limitations
 
 - This is a **capstone-scale** dataset (111 labeled rows). Metrics will move as more labeled SOC data is added.
-- **Perfect (1.0) scores are not production proof** — with ~34 test rows and strong lexical cues in `event_type`/`description`, the model can memorize the demo set. See [MODEL_ASSESSMENT.md](MODEL_ASSESSMENT.md) for the honest capstone-vs-SOC verdict.
-- Features: TF-IDF over `event_type + description + username`, plus scaled timestamp and source IP integer.
-- Model: logistic regression with `class_weight='balanced'`.
-- Inference is a **rules + ML hybrid** (`triage_engine` / CLI): ML predicts severity when artifacts exist; escalate/investigate/ignore recommendations stay rule-based; critical phrases are rule-only (no `critical` label in the CSV).
-- Wazuh live alerts are triaged with the same model + rule engine; this report measures the **labeled CSV severity task**, not live Wazuh ground truth (which requires analyst labels).
+- **Perfect (1.0) scores are not production proof** — with a small test split and strong lexical cues in `event_type`/`description`, the model can still look strong. See [MODEL_ASSESSMENT.md](MODEL_ASSESSMENT.md).
+- Features: TF-IDF (`ngram_range=(1,2)`, `max_features=5000`) over `event_type + description + username`, plus scaled **hour-of-day** only (raw Unix timestamp and `source_ip_num` dropped to reduce memorization).
+- Model selection: LogisticRegression / RandomForest / CalibratedClassifierCV via stratified CV macro-F1; this report scores the winner on the hold-out.
+- Production artifacts (`soc_model.pkl`, etc.) are written by **`train_model.py`** after a **full-data refit**. This script does **not** overwrite them — it is the honest hold-out.
+- Inference is a **rules + ML hybrid** (`triage_engine`): rules keep `critical`; low ML confidence falls back to rules.
+- Wazuh live alerts are triaged with the same hybrid; this report measures the **labeled CSV severity task**, not live Wazuh ground truth.
 - **Not production-ready** for unattended SOC triage or auto-containment; suitable as a capstone demo of the pipeline.

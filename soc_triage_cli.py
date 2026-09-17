@@ -1,5 +1,6 @@
 import os
 import time
+import threading
 import json
 import pandas as pd
 import joblib
@@ -227,25 +228,16 @@ def analyze_and_predict(log: str, event_type="", description="", username="", ti
             text_input = f"{event_type} {description} {username}"
 
             X_text = VECTORIZER.transform([str(text_input)])
-            # Convert timestamp
+            # Weak numeric feature: hour-of-day only (avoid memorizing raw IP/timestamp)
             try:
-                ts_val = pd.to_datetime(timestamp, errors="coerce").view('int64') // 10**9
-            except:
-                try:
-                    ts_val = int(pd.to_datetime(timestamp, errors="coerce").astype('int64') // 10**9)
-                except:
-                    ts_val = 0
+                ts = pd.to_datetime(timestamp, errors="coerce")
+                hour_val = float(ts.hour) if pd.notna(ts) else 0.0
+            except Exception:
+                hour_val = 0.0
 
-            # Convert IP
-            try:
-                ip_val = struct.unpack("!I", socket.inet_aton(str(source_ip)))[0]
-            except:
-                ip_val = 0
+            X_numeric = SCALER.transform([[hour_val]])
 
-            # SCALE USING NUMPY (NO WARNINGS)
-            X_numeric = SCALER.transform([[ts_val, ip_val]])
-
-            # Combine TF-IDF + numeric
+            # Combine TF-IDF + hour
             X_final = hstack([X_text, X_numeric])
 
             y_raw = MODEL.predict(X_final)[0]
@@ -351,21 +343,57 @@ def save_to_reports(result: dict):
         print("⚠ Error saving JSONL:", e)
 
 # ------------------------------------------------------------------------
-# WATCHERS
+# WATCHERS (stoppable via Event / dashboard Stop buttons)
 # ------------------------------------------------------------------------
-def watch_csv(file_path, interval=5):
+_csv_stop = threading.Event()
+_wazuh_stop = threading.Event()
+
+
+def stop_csv_watcher():
+    """Signal the CSV watcher loop to exit."""
+    _csv_stop.set()
+
+
+def stop_wazuh_watcher():
+    """Signal the Wazuh watcher loop to exit."""
+    _wazuh_stop.set()
+
+
+def _interruptible_sleep(seconds, stop_event, chunk=0.5):
+    """Sleep in short chunks so stop_event is checked responsively.
+
+    Returns True if stop was requested during the wait.
+    """
+    if seconds <= 0:
+        return bool(stop_event and stop_event.is_set())
+    elapsed = 0.0
+    while elapsed < seconds:
+        if stop_event is not None and stop_event.is_set():
+            return True
+        step = min(chunk, seconds - elapsed)
+        time.sleep(step)
+        elapsed += step
+    return bool(stop_event and stop_event.is_set())
+
+
+def watch_csv(file_path, interval=5, stop_event=None):
+    """Watch a CSV for new rows. Pass stop_event (or use stop_csv_watcher) to stop."""
     print(f"📂 Watching CSV: {file_path}")
     seen_rows = 0
+    stop = stop_event if stop_event is not None else _csv_stop
+    stop.clear()
 
     try:
-        while True:
+        while not stop.is_set():
             if not os.path.exists(file_path):
-                time.sleep(interval)
+                if _interruptible_sleep(interval, stop):
+                    break
                 continue
 
             df = pd.read_csv(file_path)
             if df.empty:
-                time.sleep(interval)
+                if _interruptible_sleep(interval, stop):
+                    break
                 continue
 
             required_cols = ["event_type", "description", "username", "timestamp", "source_ip"]
@@ -376,6 +404,8 @@ def watch_csv(file_path, interval=5):
 
             new_rows = df.iloc[seen_rows:]
             for _, row in new_rows.iterrows():
+                if stop.is_set():
+                    break
                 log_text = f"{row['event_type']} {row['description']} {row['username']}"
                 analyze_and_predict(
                     log=log_text,
@@ -387,22 +417,30 @@ def watch_csv(file_path, interval=5):
                 )
 
             seen_rows = len(df)
-            time.sleep(interval)
+            if _interruptible_sleep(interval, stop):
+                break
 
     except KeyboardInterrupt:
         print("🛑 CSV watcher stopped.")
+        stop.set()
     except Exception as e:
         print("⚠ CSV watcher error:", e)
+    else:
+        if stop.is_set():
+            print("🛑 CSV watcher stopped.")
 
-def watch_wazuh(interval=10):
-    """Poll Wazuh alerts with bounded dedup and backoff on transient errors."""
+
+def watch_wazuh(interval=10, stop_event=None):
+    """Poll Wazuh alerts with bounded dedup and backoff. Stop via stop_wazuh_watcher()."""
     print("🔗 Watching Wazuh alerts...")
     seen = set()
     max_seen = 5000
     failures = 0
+    stop = stop_event if stop_event is not None else _wazuh_stop
+    stop.clear()
 
     try:
-        while True:
+        while not stop.is_set():
             try:
                 details = fetch_wazuh_alert_details(limit=10)
                 failures = 0
@@ -410,15 +448,18 @@ def watch_wazuh(interval=10):
                 failures += 1
                 wait = min(interval * (2 ** min(failures, 4)), 120)
                 print(f"⚠ Wazuh fetch failed ({e}); retry in {wait}s")
-                time.sleep(wait)
+                if _interruptible_sleep(wait, stop):
+                    break
                 continue
 
             if not details:
-                # empty can mean no alerts or auth/config issue; soft wait
-                time.sleep(interval)
+                if _interruptible_sleep(interval, stop):
+                    break
                 continue
 
             for alert in details:
+                if stop.is_set():
+                    break
                 summary = alert.get("summary") or alert.get("full_log") or str(alert)
                 key = summary
                 if key in seen:
@@ -444,11 +485,16 @@ def watch_wazuh(interval=10):
 
                 analyze_and_predict(enriched)
 
-            time.sleep(interval)
+            if _interruptible_sleep(interval, stop):
+                break
     except KeyboardInterrupt:
         print("🛑 Wazuh watcher stopped.")
+        stop.set()
     except Exception as e:
         print("⚠ Wazuh watcher error:", e)
+    else:
+        if stop.is_set():
+            print("🛑 Wazuh watcher stopped.")
 
 
 # ------------------------------------------------------------------------

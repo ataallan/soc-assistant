@@ -116,21 +116,37 @@
     <a href="/report">Triage Report</a>
 
     <!-- Watcher / Train Buttons -->
-    <form onsubmit="handleForm(event, '/watch-wazuh/start', 'status-wazuh')" style="margin-top: 20px;">
-        <button type="submit" class="btn btn-sm btn-primary w-100">
-            Start Wazuh Watcher
+    <div style="margin-top: 20px;">
+        <div class="d-flex justify-content-between align-items-center mb-1">
+            <small class="text-secondary">Wazuh</small>
             <span id="status-wazuh" class="status-indicator status-idle">Idle</span>
-        </button>
-    </form>
+        </div>
+        <div class="d-flex gap-1">
+            <form onsubmit="handleForm(event, '/watch-wazuh/start', 'status-wazuh')" class="flex-grow-1">
+                <button type="submit" class="btn btn-sm btn-primary w-100">Start</button>
+            </form>
+            <form onsubmit="handleForm(event, '/watch-wazuh/stop', 'status-wazuh')" class="flex-grow-1">
+                <button type="submit" class="btn btn-sm btn-outline-danger w-100">Stop</button>
+            </form>
+        </div>
+    </div>
 
-    <form onsubmit="handleForm(event, '/watch-csv/start', 'status-csv')" style="margin-top: 10px;">
-        <button type="submit" class="btn btn-sm btn-warning w-100">
-            Start CSV Watcher
+    <div style="margin-top: 12px;">
+        <div class="d-flex justify-content-between align-items-center mb-1">
+            <small class="text-secondary">CSV</small>
             <span id="status-csv" class="status-indicator status-idle">Idle</span>
-        </button>
-    </form>
+        </div>
+        <div class="d-flex gap-1">
+            <form onsubmit="handleForm(event, '/watch-csv/start', 'status-csv')" class="flex-grow-1">
+                <button type="submit" class="btn btn-sm btn-warning w-100">Start</button>
+            </form>
+            <form onsubmit="handleForm(event, '/watch-csv/stop', 'status-csv')" class="flex-grow-1">
+                <button type="submit" class="btn btn-sm btn-outline-danger w-100">Stop</button>
+            </form>
+        </div>
+    </div>
 
-    <form onsubmit="handleForm(event, '/train-model', 'status-ml')" style="margin-top: 10px;">
+    <form onsubmit="handleForm(event, '/train-model', 'status-ml')" style="margin-top: 12px;">
         <button type="submit" class="btn btn-sm btn-success w-100">
             Train ML Model
             <span id="status-ml" class="status-indicator status-idle">Idle</span>

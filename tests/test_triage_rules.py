@@ -71,3 +71,26 @@ def test_analyze_log_recommendation_aligned_with_rules():
         description="ransomware",
     )
     assert result["recommendation"] == "escalate"
+
+
+def test_analyze_log_rules_critical_overrides_ml():
+    """Rules saying critical must keep critical even if ML would differ."""
+    result = analyze_log(
+        "ransomware encrypting shares",
+        event_type="benign_looking",
+        description="routine check",
+        username="alice",
+    )
+    assert result["severity"] == "critical"
+    assert result["recommendation"] == "escalate"
+
+
+def test_analyze_log_low_ml_confidence_falls_back_to_rules(monkeypatch):
+    import triage_engine as te
+
+    def fake_ml(*args, **kwargs):
+        return "high", 0.20  # below threshold
+
+    monkeypatch.setattr(te, "ml_predict_severity", fake_ml)
+    result = te.analyze_log("User opened a ticket about printer jam")
+    assert result["severity"] == "low"  # rules classify as low

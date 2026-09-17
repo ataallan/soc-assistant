@@ -1,6 +1,21 @@
 # Model assessment — AI SOC Assistant (capstone)
 
-**Verdict for Allan:** The ML severity model is **good enough for a capstone demo**, not for real SOC triage in production. Perfect hold-out scores on ~111 rows are a red flag (easy separability / memorization), not proof of operational readiness.
+**Verdict for Allan:** The ML severity model is **good enough for a capstone demo**, not for real SOC triage in production. Strong hold-out scores on ~111 rows are still a caution signal (easy separability / lexical cues), not proof of operational readiness.
+
+---
+
+## What changed in this iteration
+
+| Change | Why |
+| --- | --- |
+| TF-IDF `ngram_range=(1,2)`, `max_features=5000` | Richer text signal without leaving sklearn |
+| Dropped raw Unix timestamp + `source_ip_num` | Those features memorize demo IPs/times; weak for security semantics |
+| Kept **hour-of-day** only (scaled) | Weak circadian prior; less leakage than raw timestamp |
+| Stratified train/test + stratified CV model selection | Fairer splits; pick LogReg / RF / Calibrated LogReg by macro F1 |
+| **Full-data refit** in `train_model.py` for saved `.pkl` | Deployment artifacts use all labels; `evaluate_model.py` stays the honest hold-out |
+| Hybrid inference in `triage_engine` | Rules `critical` always wins; low ML confidence falls back to rules |
+
+**Still not production-ready** — N≈111 labeled rows.
 
 ---
 
@@ -9,12 +24,12 @@
 | Piece | Detail |
 | --- | --- |
 | Task | Multi-class **severity** prediction: `high` / `medium` / `low` |
-| Algorithm | `sklearn.linear_model.LogisticRegression` (`max_iter=500`, `class_weight='balanced'`) |
-| Text features | TF-IDF over `event_type + description + username` |
-| Numeric features | Unix timestamp + IPv4-as-int, `StandardScaler` |
+| Algorithm | Selected among LogReg / RandomForest / CalibratedClassifierCV (sklearn only) |
+| Text features | TF-IDF (`ngram_range=(1,2)`, `min_df=1`, `max_features=5000`) over `event_type + description + username` |
+| Numeric features | Hour-of-day (0–23), `StandardScaler` — **no** raw IP / Unix timestamp |
 | Artifacts | `soc_model.pkl`, `vectorizer.pkl`, `scaler.pkl`, `label_encoder.pkl` |
 | Training data | `data/sample_logs.csv` (**111** labeled rows) |
-| Training entrypoints | `train_model.py` (fit on full split), `evaluate_model.py` (honest hold-out + rewrites report/artifacts) |
+| Training entrypoints | `train_model.py` (CV select → **refit full data**), `evaluate_model.py` (honest hold-out report only) |
 
 Class balance (full CSV):
 
@@ -30,27 +45,16 @@ There is **no `critical` class** in the labeled CSV; critical comes from **rule-
 
 ## Metrics on hold-out
 
-From `python evaluate_model.py` (30% stratified hold-out, `random_state=42`, TF-IDF/scaler fit on **train only**):
+Run `python evaluate_model.py` and read [evaluation_report.md](evaluation_report.md). Numbers will change with the new pipeline; treat them as a **reproducible demo metric**, not a SOC SLA.
 
-| Metric | Value |
-| --- | --- |
-| Accuracy | **1.000** |
-| Macro F1 | **1.000** |
-| Weighted F1 | **1.000** |
-| Train / test size | 77 / 34 |
+### How to read a strong score
 
-See [evaluation_report.md](evaluation_report.md) for the full classification report and confusion matrix (all diagonal).
+On a tiny, synthetic-looking sample set, high accuracy is **not** evidence the model generalizes. Likely contributors:
 
-### How to read a perfect score
-
-On a tiny, synthetic-looking sample set, **1.0 accuracy is not evidence the model generalizes**. Likely contributors:
-
-1. **Tiny N** — 34 test rows; one lucky split can look flawless.
-2. **Strong lexical cues** — `event_type` / `description` strings (e.g. `brute_force`, “Multiple failed login…”) are almost labels in disguise; TF-IDF can separate classes with little real “understanding.”
-3. **Possible leakage-like effects** — repeated phrasings / usernames / IPs across rows; numeric IP/timestamp features can memorize demo patterns rather than attack semantics.
-4. **Imbalance** — `high` dominates; without more diverse `low`/`medium` examples, metrics overstate readiness for noisy SIEM traffic.
-
-Treat the report as a **reproducible demo metric**, not a SOC SLA.
+1. **Tiny N** — ~34 test rows; one lucky split can look excellent.
+2. **Strong lexical cues** — `event_type` / `description` strings are almost labels in disguise.
+3. **Repeated phrasings** — usernames/patterns reused across rows.
+4. **Imbalance** — `high` dominates.
 
 ---
 
@@ -59,22 +63,22 @@ Treat the report as a **reproducible demo metric**, not a SOC SLA.
 ### `triage_engine.py`
 
 - Loads artifacts at import (`load_ml_model`).
-- `analyze_log()` prefers **`ml_predict_severity(...)`**; if artifacts are missing, falls back to **`classify_severity(log)`** (keyword / numeric rules).
-- **`recommendation`** (`escalate` / `investigate` / `ignore`) always comes from **`rule_based_triage(log)`**, which itself uses rule severity — not the ML label.
-
-So ML can drive the reported **severity** field while **action recommendation** stays rule-driven. That split is fine for a demo but must be documented for operators.
+- `analyze_log()` hybrid policy:
+  1. If rules say **`critical`** → keep **`critical`**.
+  2. Else if ML missing or `max(proba) < 0.55` → use **rule severity**.
+  3. Else use **ML severity**.
+- **`recommendation`** (`escalate` / `investigate` / `ignore`) always comes from **`rule_based_triage(log)`**.
 
 ### `soc_triage_cli.py`
 
-- `analyze_and_predict()` runs a **second, parallel ML path** (load pkl → TF-IDF + scaler → predict) and logs `ml_prediction`.
-- It also calls `analyze_log()` (which may run ML again) and uses that result’s severity for block/email decisions.
-- High/critical severity → simulated containment + email.
+- Parallel ML path for `ml_prediction` column (same text + hour features).
+- Block/email decisions follow `analyze_log()` severity (high/critical).
 
 ### Dashboard
 
-- Starts watchers / shows reports that include `severity`, `ml_prediction`, and `rule_based` columns from the same pipeline; analytics count severities from CSV reports.
+- Watchers / reports / analytics consume the same pipeline columns.
 
-**Bottom line:** Live triage is a **rules + ML hybrid**. Rules provide explainable escalate/ignore behavior and critical phrases; ML adds a learned severity on CSV-shaped fields. Wazuh alerts are stringified / field-mapped into that same pipeline — there is **no labeled Wazuh ground truth** in this repo.
+**Bottom line:** Live triage is a **rules + ML hybrid**. Rules are the safety net for critical TTPs and low-confidence ML.
 
 ---
 
@@ -82,24 +86,34 @@ So ML can drive the reported **severity** field while **action recommendation** 
 
 | Question | Answer |
 | --- | --- |
-| Capstone / portfolio demo? | **Yes** — clear pipeline, artifacts, eval script, hybrid design. |
+| Capstone / portfolio demo? | **Yes** — clearer features, CV selection, hybrid guardrails. |
 | Real SOC auto-triage / auto-block? | **No.** |
-| Why not? | ~100 rows; perfect scores unreliable; no external validation; no calibration; no concept drift monitoring; IP-as-int and timestamps are weak security features; blocking on model output would be unsafe. |
+| Why not? | ~100 rows; no external validation; limited calibration; blocking on model output alone would be unsafe. |
 
 **Honest one-liner for Allan’s defense:**  
-*“The model demonstrates an end-to-end ML triage pipeline on a small labeled set. Perfect hold-out metrics reflect the demo dataset, not production generalization. For a real SOC I would keep rules as the safety net and retrain only after collecting thousands of analyst-labeled alerts.”*
+*“The model demonstrates an end-to-end ML triage pipeline on a small labeled set. Hold-out metrics reflect the demo dataset, not production generalization. Rules remain the safety net; we never auto-block on ML alone.”*
 
 ---
 
-## Concrete next steps to improve
+## Suggested upgrades
 
-1. **More labeled data** — target thousands of alerts with analyst severity (and `critical`); stratify by source (Wazuh rule id, MITRE tactic).
-2. **Proper validation** — stratified k-fold CV; a time-based split (train past → test future) to reduce leakage from temporal/IP reuse.
-3. **Feature hygiene** — drop or bucket raw IP/timestamp; add rule_id, agent role, geo/ASN, failure counts; avoid putting the label text into features.
-4. **Calibration & thresholds** — `CalibratedClassifierCV` or temperature scaling; tune escalate threshold for precision on `high`/`critical`.
-5. **Rule + ML ensemble** — e.g. rules veto for known critical TTPs; ML only ranks medium/unknown; require agreement before auto-containment.
-6. **Separate recommendation from severity** — train or map both explicitly so report columns stay consistent.
-7. **Ops** — drift checks, human-in-the-loop, never auto-block solely on ML until precision is measured on live Wazuh labels.
+Prioritized for Allan after the capstone:
+
+1. **More labeled data** — thousands of analyst-labeled alerts (include `critical`); stratify by Wazuh rule id / MITRE tactic.
+2. **Time-split validation** — train on past alerts, test on future (reduces leakage from reused IPs/usernames).
+3. **Calibration** — keep / expand `CalibratedClassifierCV` or temperature scaling; tune escalate thresholds for precision on `high`.
+4. **Ensemble with rules** — require rule+ML agreement before any auto-containment; ML ranks medium/unknown only.
+5. **No auto-block on ML alone** — keep dry-run / human approval for containment (already the safe default).
+6. **Richer features (later)** — rule_id, agent role, geo/ASN, failure counts; still avoid raw IP-as-int as a primary signal.
+7. **Optional LightGBM / XGBoost later** — only after N is larger and deps are justified; sklearn RF/LogReg are enough for the demo.
+8. **Ops** — drift checks, human-in-the-loop review queue, periodic retrain with fresh labels.
+
+### What we already did now
+
+- Text-first TF-IDF bigrams; dropped memorization-prone IP/raw timestamp.
+- Stratified CV model pick + full-data refit for artifacts.
+- Soft hybrid: critical rules win; low ML confidence → rules.
+- Honest docs: this file + `evaluate_model.py` hold-out (does not overwrite full-data `.pkl`).
 
 ---
 
@@ -107,7 +121,8 @@ So ML can drive the reported **severity** field while **action recommendation** 
 
 ```bash
 source .venv/bin/activate   # or .venv\Scripts\activate
-python evaluate_model.py
+python train_model.py       # CV select + full-data artifacts
+python evaluate_model.py    # honest hold-out report
 pytest -q
 ```
 

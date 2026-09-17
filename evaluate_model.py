@@ -3,19 +3,17 @@ Hold-out evaluation for the SOC triage severity model.
 
 Uses the same feature pipeline as train_model.py, trains on a train split,
 scores on a held-out test split, and writes docs/evaluation_report.md.
+
+Does **not** overwrite production artifacts (those are full-data refits from
+train_model.py). This script is the honest hold-out report.
 """
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-import joblib
 import pandas as pd
-from scipy.sparse import hstack
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
@@ -23,44 +21,18 @@ from sklearn.metrics import (
     f1_score,
 )
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import LabelEncoder
 
-from train_model import ip_to_int
+from train_model import (
+    RANDOM_STATE,
+    build_features,
+    select_best_estimator,
+    _clone_fresh,
+)
 
 DATA_PATH = Path("data/sample_logs.csv")
 REPORT_PATH = Path("docs/evaluation_report.md")
-RANDOM_STATE = 42
 TEST_SIZE = 0.3
-
-
-def build_features(df: pd.DataFrame, vectorizer=None, scaler=None, fit: bool = True):
-    text = (
-        df["event_type"].astype(str)
-        + " "
-        + df["description"].astype(str)
-        + " "
-        + df["username"].astype(str)
-    )
-    if fit or vectorizer is None:
-        vectorizer = TfidfVectorizer()
-        X_text = vectorizer.fit_transform(text)
-    else:
-        X_text = vectorizer.transform(text)
-
-    ts = pd.to_datetime(df["timestamp"], errors="coerce")
-    ts_num = ts.astype("int64", errors="ignore") // 10**9
-    # pandas may yield float NaNs
-    ts_num = pd.to_numeric(ts_num, errors="coerce").fillna(0)
-    ip_num = df["source_ip"].apply(ip_to_int)
-    numeric = pd.DataFrame({"timestamp_num": ts_num, "source_ip_num": ip_num})
-
-    if fit or scaler is None:
-        scaler = StandardScaler()
-        X_num = scaler.fit_transform(numeric)
-    else:
-        X_num = scaler.transform(numeric)
-
-    return hstack([X_text, X_num]), vectorizer, scaler
 
 
 def main() -> int:
@@ -80,18 +52,21 @@ def main() -> int:
     y = label_encoder.fit_transform(df["severity"])
 
     # Split rows first so TF-IDF is fit on train only (honest hold-out)
+    stratify = y if df["severity"].value_counts().min() >= 2 else None
     train_df, test_df, y_train, y_test = train_test_split(
         df,
         y,
         test_size=TEST_SIZE,
         random_state=RANDOM_STATE,
-        stratify=y if df["severity"].value_counts().min() >= 2 else None,
+        stratify=stratify,
     )
 
     X_train, vectorizer, scaler = build_features(train_df, fit=True)
     X_test, _, _ = build_features(test_df, vectorizer=vectorizer, scaler=scaler, fit=False)
 
-    model = LogisticRegression(max_iter=500, class_weight="balanced")
+    # Same candidate pool as train_model; pick by CV on train only, then score test
+    best_name, _, cv_f1 = select_best_estimator(X_train, y_train)
+    model = _clone_fresh(best_name)
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
 
@@ -107,12 +82,6 @@ def main() -> int:
     acc = accuracy_score(y_test, y_pred)
     f1_macro = f1_score(y_test, y_pred, average="macro", zero_division=0)
     f1_weighted = f1_score(y_test, y_pred, average="weighted", zero_division=0)
-
-    # Optional: refresh on-disk artifacts so CLI/dashboard match this run
-    joblib.dump(model, "soc_model.pkl")
-    joblib.dump(vectorizer, "vectorizer.pkl")
-    joblib.dump(scaler, "scaler.pkl")
-    joblib.dump(label_encoder, "label_encoder.pkl")
 
     cm_rows = []
     header = "| actual \\ predicted | " + " | ".join(label_encoder.classes_) + " |"
@@ -136,6 +105,7 @@ Generated: **{generated}**
 - Rows: **{len(df)}**
 - Hold-out: **{int(TEST_SIZE * 100)}%** test / **{int((1 - TEST_SIZE) * 100)}%** train (`random_state={RANDOM_STATE}`, stratified when possible)
 - Label column: `severity`
+- Selected estimator (CV on train): **{best_name}** (train CV macro F1={cv_f1:.3f})
 
 ### Class distribution (full dataset)
 
@@ -172,11 +142,12 @@ python evaluate_model.py
 ## Notes / limitations
 
 - This is a **capstone-scale** dataset ({len(df)} labeled rows). Metrics will move as more labeled SOC data is added.
-- **Perfect (1.0) scores are not production proof** — with a small test split and strong lexical cues in `event_type`/`description`, the model can memorize the demo set. See [MODEL_ASSESSMENT.md](MODEL_ASSESSMENT.md) for the honest capstone-vs-SOC verdict.
-- Features: TF-IDF over `event_type + description + username`, plus scaled timestamp and source IP integer.
-- Model: logistic regression with `class_weight='balanced'`.
-- Inference is a **rules + ML hybrid** (`triage_engine` / CLI): ML predicts severity when artifacts exist; escalate/investigate/ignore recommendations stay rule-based; critical phrases are rule-only (no `critical` label in the CSV).
-- Wazuh live alerts are triaged with the same model + rule engine; this report measures the **labeled CSV severity task**, not live Wazuh ground truth (which requires analyst labels).
+- **Perfect (1.0) scores are not production proof** — with a small test split and strong lexical cues in `event_type`/`description`, the model can still look strong. See [MODEL_ASSESSMENT.md](MODEL_ASSESSMENT.md).
+- Features: TF-IDF (`ngram_range=(1,2)`, `max_features=5000`) over `event_type + description + username`, plus scaled **hour-of-day** only (raw Unix timestamp and `source_ip_num` dropped to reduce memorization).
+- Model selection: LogisticRegression / RandomForest / CalibratedClassifierCV via stratified CV macro-F1; this report scores the winner on the hold-out.
+- Production artifacts (`soc_model.pkl`, etc.) are written by **`train_model.py`** after a **full-data refit**. This script does **not** overwrite them — it is the honest hold-out.
+- Inference is a **rules + ML hybrid** (`triage_engine`): rules keep `critical`; low ML confidence falls back to rules.
+- Wazuh live alerts are triaged with the same hybrid; this report measures the **labeled CSV severity task**, not live Wazuh ground truth.
 - **Not production-ready** for unattended SOC triage or auto-containment; suitable as a capstone demo of the pipeline.
 """
 
@@ -184,7 +155,7 @@ python evaluate_model.py
     REPORT_PATH.write_text(md)
     print(report_txt)
     print(f"\nAccuracy={acc:.3f}  macro_F1={f1_macro:.3f}  weighted_F1={f1_weighted:.3f}")
-    print(f"Wrote {REPORT_PATH}")
+    print(f"Selected={best_name}  Wrote {REPORT_PATH}")
     return 0
 
 
