@@ -95,19 +95,22 @@
     </div>
 </div>
 
-<!-- KPI tiles -->
-<div class="kpi-row mb-4">
-    <a href="/report?view=total" class="kpi-tile" title="All triage rows">
+<!-- KPI tiles (clickable → filtered triage details) -->
+<div class="kpi-row mb-4" role="navigation" aria-label="Alert detail views">
+    <a href="/report?view=total" class="kpi-tile" title="Open all alert details" aria-label="Total alerts — view details">
         <span class="kpi-value" id="alert-count-total">0</span>
         <span class="kpi-label">Total</span>
+        <span class="kpi-hint">View details →</span>
     </a>
-    <a href="/report?view=severe" id="badge-severe" class="kpi-tile kpi-severe" title="High and critical severity">
+    <a href="/report?view=severe" id="badge-severe" class="kpi-tile kpi-severe" title="Open severe alert details" aria-label="Severe alerts — view details">
         <span class="kpi-value" id="alert-count-severe">0</span>
         <span class="kpi-label">Severe</span>
+        <span class="kpi-hint">View details →</span>
     </a>
-    <a href="/report?view=escalated" class="kpi-tile kpi-escalated" title="Escalate recommendations">
+    <a href="/report?view=escalated" class="kpi-tile kpi-escalated" title="Open escalated alert details" aria-label="Escalated alerts — view details">
         <span class="kpi-value" id="alert-count-escalated">0</span>
         <span class="kpi-label">Escalated</span>
+        <span class="kpi-hint">View details →</span>
     </a>
 </div>
 

@@ -23,13 +23,11 @@
         <span id="notifCloseBtn" aria-label="Close">&times;</span>
     </div>
 
-    <div id="notifSummary">
-        <p><span id="notifCriticalCount">0</span> Severe Alerts</p>
-        <p><span id="notifHighCount">0</span> Escalations</p>
-        <p><span id="notifBlockedCount">0</span> Containment</p>
-        <p class="mb-2 mt-2">
-            <button type="button" id="panelSilenceBtn" class="btn btn-sm btn-outline-light">Silence</button>
-        </p>
+        <div id="notifSummary">
+        <p><a href="/report?view=severe" class="notif-link"><span id="notifCriticalCount">0</span> Severe alerts</a></p>
+        <p><a href="/report?view=escalated" class="notif-link"><span id="notifHighCount">0</span> Escalated</a></p>
+        <p><a href="/report?view=total" class="notif-link"><span id="notifTotalCount">0</span> Total alerts</a></p>
+        <p><a href="/blocks" class="notif-link"><span id="notifBlockedCount">0</span> Containment</a></p>
     </div>
 
     <div id="notifDetails">

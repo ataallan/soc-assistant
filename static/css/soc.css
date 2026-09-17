@@ -208,6 +208,7 @@ a:hover {
 .kpi-tile {
   display: block;
   text-decoration: none !important;
+  color: inherit !important;
   background: var(--soc-panel);
   border: 1px solid var(--soc-border);
   border-radius: var(--soc-radius);
@@ -216,6 +217,20 @@ a:hover {
   transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
   position: relative;
   overflow: hidden;
+  cursor: pointer !important;
+  pointer-events: auto !important;
+  user-select: none;
+}
+.kpi-tile * {
+  pointer-events: none; /* clicks hit the <a> */
+}
+.kpi-hint {
+  display: block;
+  margin-top: 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--soc-accent);
+  letter-spacing: 0.02em;
 }
 
 .kpi-tile::before {
@@ -806,3 +821,17 @@ code {
 .badge.bg-warning { background: var(--soc-warn) !important; }
 .badge.bg-info { background: var(--soc-accent) !important; color: #fff !important; }
 .badge.bg-secondary { background: #475569 !important; }
+
+
+.notif-link {
+  color: var(--soc-text) !important;
+  text-decoration: none !important;
+  display: block;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.notif-link:hover {
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--soc-accent) !important;
+}
