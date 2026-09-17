@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from containment import get_mode, get_mode_label, load_blocked
+from containment import get_mode, get_mode_label, get_ui_notice, load_blocked
 
 # -------------------------------------------------
 # EMAIL (Flask-Mail)
@@ -201,7 +201,7 @@ def resend_otp():
 
     demo_otp = deliver_otp(username, otp, subject="Your New Verification Code")
     session["demo_otp"] = demo_otp
-    msg = "A new code has been sent to your email." if mail_configured() else "Mail is not configured — use the demo code shown below (also printed in the terminal)."
+    msg = "A new code has been sent to your email." if mail_configured() else "A new verification code is shown below."
     return render_template("2fa.html", message=msg, demo_otp=demo_otp)
 
 @app.route("/logout")
@@ -310,6 +310,7 @@ def view_blocks():
         blocks=blocks,
         containment_mode=get_mode(),
         containment_label=get_mode_label(),
+        containment_notice=get_ui_notice(),
     )
 
 @app.route("/block/ip", methods=["POST"])

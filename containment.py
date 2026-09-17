@@ -40,10 +40,20 @@ def get_mode() -> str:
 
 
 def get_mode_label() -> str:
+    """Short operator-facing label (no eng/config jargon)."""
     return {
-        "simulated": "Simulated containment (local JSON only)",
-        "dry_run": "Dry-run (audit log only — no list changes)",
-        "stub": "Firewall/SOAR API stub (optional HTTP + local list)",
+        "simulated": "Simulation mode",
+        "dry_run": "Preview mode",
+        "stub": "Integrated response mode",
+    }[get_mode()]
+
+
+def get_ui_notice() -> str:
+    """One clean sentence for the SOC UI."""
+    return {
+        "simulated": "Containment actions are recorded in this console for demonstration. They do not change production network controls.",
+        "dry_run": "Preview mode is on. Actions are logged for review and are not applied to the block list.",
+        "stub": "Response actions are sent through the configured integration endpoint, then reflected in this console.",
     }[get_mode()]
 
 
@@ -118,7 +128,7 @@ def block_ip(ip: str) -> Dict[str, Any]:
 
     if mode == "dry_run":
         _audit("block", "ip", ip, "dry_run")
-        msg = f"[DRY-RUN] Would block IP {ip} (no list change)"
+        msg = f"[Preview] Block IP queued for review: {ip}"
         print(msg)
         return {"ok": True, "mode": mode, "message": msg, "changed": False}
 
@@ -137,8 +147,8 @@ def block_ip(ip: str) -> Dict[str, Any]:
         data["ips"].append(ip)
         save_blocked(data)
     _audit("block", "ip", ip, "applied", {"stub": stub_info} if stub_info else None)
-    label = "STUB" if mode == "stub" else "SIMULATED"
-    msg = f"[{label}] Blocked IP {ip} (local JSON; not a live firewall unless stub URL is a real control plane)"
+    label = {"simulated":"Simulation","dry_run":"Preview","stub":"Integration"}.get(mode, mode.title())
+    msg = f"[{label}] IP blocked in console: {ip}"
     print(msg)
     return {"ok": True, "mode": mode, "message": msg, "changed": changed, "stub": stub_info}
 
@@ -151,7 +161,7 @@ def unblock_ip(ip: str) -> Dict[str, Any]:
 
     if mode == "dry_run":
         _audit("unblock", "ip", ip, "dry_run")
-        msg = f"[DRY-RUN] Would unblock IP {ip} (no list change)"
+        msg = f"[Preview] Unblock IP queued for review: {ip}"
         print(msg)
         return {"ok": True, "mode": mode, "message": msg, "changed": False}
 
@@ -168,7 +178,7 @@ def unblock_ip(ip: str) -> Dict[str, Any]:
         data["ips"].remove(ip)
         save_blocked(data)
     _audit("unblock", "ip", ip, "applied", {"stub": stub_info} if stub_info else None)
-    label = "STUB" if mode == "stub" else "SIMULATED"
+    label = {"simulated":"Simulation","dry_run":"Preview","stub":"Integration"}.get(mode, mode.title())
     msg = f"[{label}] Unblocked IP {ip}"
     print(msg)
     return {"ok": True, "mode": mode, "message": msg, "changed": changed, "stub": stub_info}
@@ -182,7 +192,7 @@ def block_user(user: str) -> Dict[str, Any]:
 
     if mode == "dry_run":
         _audit("block", "user", user, "dry_run")
-        msg = f"[DRY-RUN] Would block user {user} (no list change)"
+        msg = f"[Preview] Block user queued for review: {user}"
         print(msg)
         return {"ok": True, "mode": mode, "message": msg, "changed": False}
 
@@ -199,8 +209,8 @@ def block_user(user: str) -> Dict[str, Any]:
         data["users"].append(user)
         save_blocked(data)
     _audit("block", "user", user, "applied", {"stub": stub_info} if stub_info else None)
-    label = "STUB" if mode == "stub" else "SIMULATED"
-    msg = f"[{label}] Blocked user {user} (local JSON; not a live identity lockout unless stub URL is real)"
+    label = {"simulated":"Simulation","dry_run":"Preview","stub":"Integration"}.get(mode, mode.title())
+    msg = f"[{label}] User blocked in console: {user}"
     print(msg)
     return {"ok": True, "mode": mode, "message": msg, "changed": changed, "stub": stub_info}
 
@@ -213,7 +223,7 @@ def unblock_user(user: str) -> Dict[str, Any]:
 
     if mode == "dry_run":
         _audit("unblock", "user", user, "dry_run")
-        msg = f"[DRY-RUN] Would unblock user {user} (no list change)"
+        msg = f"[Preview] Unblock user queued for review: {user}"
         print(msg)
         return {"ok": True, "mode": mode, "message": msg, "changed": False}
 
@@ -230,7 +240,7 @@ def unblock_user(user: str) -> Dict[str, Any]:
         data["users"].remove(user)
         save_blocked(data)
     _audit("unblock", "user", user, "applied", {"stub": stub_info} if stub_info else None)
-    label = "STUB" if mode == "stub" else "SIMULATED"
+    label = {"simulated":"Simulation","dry_run":"Preview","stub":"Integration"}.get(mode, mode.title())
     msg = f"[{label}] Unblocked user {user}"
     print(msg)
     return {"ok": True, "mode": mode, "message": msg, "changed": changed, "stub": stub_info}
