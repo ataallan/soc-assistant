@@ -57,6 +57,8 @@ pip install -r requirements.txt
 pytest -q
 ```
 
+Covers severity rules, Wazuh alert parsing, a **mocked Wazuh API client** (no live network), NLP helpers, and simulated containment. Latest quiet run is saved under [docs/screenshots/07-pytest.txt](docs/screenshots/07-pytest.txt).
+
 ## Model evaluation
 
 Run an honest hold-out evaluation (same feature pipeline as training):
@@ -66,6 +68,8 @@ python evaluate_model.py
 ```
 
 This prints a classification report and writes [docs/evaluation_report.md](docs/evaluation_report.md) (accuracy, F1, confusion matrix, limitations).
+
+For an honest **capstone vs production** read of the ML severity model (tiny dataset, perfect demo scores, next steps), see [docs/MODEL_ASSESSMENT.md](docs/MODEL_ASSESSMENT.md).
 
 ## Train the model
 

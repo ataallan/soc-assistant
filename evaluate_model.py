@@ -172,9 +172,12 @@ python evaluate_model.py
 ## Notes / limitations
 
 - This is a **capstone-scale** dataset ({len(df)} labeled rows). Metrics will move as more labeled SOC data is added.
+- **Perfect (1.0) scores are not production proof** — with a small test split and strong lexical cues in `event_type`/`description`, the model can memorize the demo set. See [MODEL_ASSESSMENT.md](MODEL_ASSESSMENT.md) for the honest capstone-vs-SOC verdict.
 - Features: TF-IDF over `event_type + description + username`, plus scaled timestamp and source IP integer.
 - Model: logistic regression with `class_weight='balanced'`.
+- Inference is a **rules + ML hybrid** (`triage_engine` / CLI): ML predicts severity when artifacts exist; escalate/investigate/ignore recommendations stay rule-based; critical phrases are rule-only (no `critical` label in the CSV).
 - Wazuh live alerts are triaged with the same model + rule engine; this report measures the **labeled CSV severity task**, not live Wazuh ground truth (which requires analyst labels).
+- **Not production-ready** for unattended SOC triage or auto-containment; suitable as a capstone demo of the pipeline.
 """
 
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
