@@ -54,10 +54,34 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-only-change-me")
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME', '')
-app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD', '')
+app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME', '').strip()
+app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD', '').strip()
+# Flask-Mail requires a default sender when Message(...) has no sender / empty sender
+app.config['MAIL_DEFAULT_SENDER'] = app.config['MAIL_USERNAME'] or 'noreply@localhost'
 
 mail = Mail(app)
+
+
+def mail_configured() -> bool:
+    return bool(app.config['MAIL_USERNAME'] and app.config['MAIL_PASSWORD'])
+
+
+def deliver_otp(username: str, otp: str, subject: str = "Your Verification Code") -> str:
+    """Send OTP by email when configured; otherwise print + return code for local demo UI."""
+    body = f"Your verification code is: {otp}. It expires in 5 minutes."
+    if mail_configured():
+        msg = Message(
+            subject,
+            sender=app.config['MAIL_USERNAME'],
+            recipients=[username],
+        )
+        msg.body = body
+        mail.send(msg)
+        print(f"OTP emailed to {username}")
+        return ""
+    # Local / Capstone demo fallback — no crash when .env mail is empty
+    print(f"[DEMO OTP] user={username} code={otp} (MAIL_USERNAME/MAIL_PASSWORD not set in .env)")
+    return otp
 
 # -------------------------------------------------
 # USER DATABASE
@@ -118,13 +142,8 @@ def login():
         session["otp"] = otp
         session["otp_time"] = time.time()
 
-        # Send email
-        msg = Message("Your Verification Code",
-                      sender=app.config['MAIL_USERNAME'],
-                      recipients=[username])
-        msg.body = f"Your verification code is: {otp}. It expires in 5 minutes."
-        mail.send(msg)
-
+        demo_otp = deliver_otp(username, otp)
+        session["demo_otp"] = demo_otp  # shown on /2fa only when mail is not configured
         return redirect("/2fa")
 
     return render_template("login.html")
@@ -143,18 +162,26 @@ def two_factor():
             session.pop("pending_user", None)
             session.pop("otp", None)
             session.pop("otp_time", None)
-            return render_template("2fa.html", error="Code expired. Please login again.")
+            return render_template("2fa.html", error="Code expired. Please login again.", demo_otp="")
 
         if code == session.get("otp"):
             session["user"] = session["pending_user"]
-            session.pop("pending_user")
-            session.pop("otp")
-            session.pop("otp_time")
+            session.pop("pending_user", None)
+            session.pop("otp", None)
+            session.pop("otp_time", None)
+            session.pop("demo_otp", None)
             return redirect("/")
 
-        return render_template("2fa.html", error="Invalid code")
+        return render_template(
+            "2fa.html",
+            error="Invalid code",
+            demo_otp=session.get("demo_otp") or "",
+        )
 
-    return render_template("2fa.html")
+    return render_template(
+        "2fa.html",
+        demo_otp=session.get("demo_otp") or "",
+    )
 
 
 # ✅ NEW: RESEND OTP
@@ -170,14 +197,10 @@ def resend_otp():
     session["otp"] = otp
     session["otp_time"] = time.time()
 
-    # Send email
-    msg = Message("Your New Verification Code",
-                  sender=app.config['MAIL_USERNAME'],
-                  recipients=[username])
-    msg.body = f"Your new verification code is: {otp}. It expires in 5 minutes."
-    mail.send(msg)
-
-    return render_template("2fa.html", message="A new code has been sent.")
+    demo_otp = deliver_otp(username, otp, subject="Your New Verification Code")
+    session["demo_otp"] = demo_otp
+    msg = "A new code has been sent to your email." if mail_configured() else "Mail is not configured — use the demo code shown below (also printed in the terminal)."
+    return render_template("2fa.html", message=msg, demo_otp=demo_otp)
 
 @app.route("/logout")
 def logout():

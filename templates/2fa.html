@@ -17,7 +17,15 @@
         <h3 class="text-center mb-3">Verify Code</h3>
 
         <!-- ✅ ERROR ALERT -->
-        {% if error %}
+        
+    {% if demo_otp %}
+    <div class="alert alert-info" role="status">
+      <strong>Local demo OTP:</strong> <code>{{ demo_otp }}</code>
+      <div class="small mt-1">MAIL_USERNAME / MAIL_PASSWORD are empty in <code>.env</code>, so the code is shown here and in the terminal instead of email.</div>
+    </div>
+    {% endif %}
+
+    {% if error %}
         <div class="alert alert-danger alert-dismissible fade show" role="alert">
             {{ error }}
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
