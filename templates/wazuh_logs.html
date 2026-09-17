@@ -3,28 +3,25 @@
 
 {% block content %}
 
-<span onclick="window.history.back()"
-      style="cursor:pointer; font-size:22px; color:#0d6efd;">
-    ⬅ Back
-</span>
+<span class="back-link" onclick="window.history.back()">← Back</span>
 
-<div class="container mt-4">
-    <h2 class="mb-3">Recent Wazuh Alerts</h2>
+<h1 class="page-title mb-3">Recent Wazuh Alerts</h1>
 
-    <div class="row mb-3">
-        <div class="col-md-6">
-            <input id="searchInput"
-                   type="text"
-                   class="form-control"
-                   placeholder="Search alerts (agent, rule, severity, text)...">
-        </div>
+<div class="row mb-3">
+    <div class="col-md-6">
+        <input id="searchInput"
+               type="text"
+               class="form-control"
+               placeholder="Search alerts (agent, rule, severity, text)...">
     </div>
+</div>
 
-    {% set rows = alerts if alerts is defined and alerts else none %}
-    {% if rows %}
-    <div id="alertsBox" style="max-height: 560px; overflow-y: auto; border: 1px solid #ddd; border-radius: 8px;">
+{% set rows = alerts if alerts is defined and alerts else none %}
+{% if rows %}
+<div class="table-panel">
+    <div class="table-scroll" style="max-height:560px;" id="alertsBox">
         <table class="table table-sm table-hover mb-0" id="alertsTable">
-            <thead class="table-light" style="position: sticky; top: 0;">
+            <thead>
                 <tr>
                     <th>Time</th>
                     <th>Severity</th>
@@ -43,7 +40,7 @@
                         <span class="badge
                             {% if sev == 'critical' %}bg-danger
                             {% elif sev == 'high' %}bg-warning text-dark
-                            {% elif sev == 'medium' %}bg-info text-dark
+                            {% elif sev == 'medium' %}bg-info
                             {% else %}bg-secondary{% endif %}">
                             {{ sev }}
                         </span>
@@ -66,18 +63,18 @@
             </tbody>
         </table>
     </div>
-    {% elif logs %}
-    <div id="alertsBox" style="max-height: 500px; overflow-y: auto; border: 1px solid #ddd; border-radius: 8px;">
-        <ul id="alertsList" class="list-group mb-0">
-            {% for alert in logs %}
-            <li class="list-group-item alert-item" data-text="{{ alert|lower }}">{{ alert }}</li>
-            {% endfor %}
-        </ul>
-    </div>
-    {% else %}
-    <div class="alert alert-secondary mt-3">No Wazuh alerts are available right now. Confirm the manager connection in settings and try again.</div>
-    {% endif %}
 </div>
+{% elif logs %}
+<div class="table-panel" id="alertsBox" style="max-height:500px;overflow-y:auto;">
+    <ul id="alertsList" class="list-group list-group-flush mb-0">
+        {% for alert in logs %}
+        <li class="list-group-item alert-item" data-text="{{ alert|lower }}">{{ alert }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% else %}
+<div class="alert alert-secondary mt-3">No Wazuh alerts are available right now. Confirm the manager connection in settings and try again.</div>
+{% endif %}
 
 <script>
 document.getElementById("searchInput").addEventListener("keyup", function () {

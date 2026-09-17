@@ -3,98 +3,66 @@
 
 {% block content %}
 
-<!-- Back Arrow -->
-<span onclick="window.history.back()" 
-      style="cursor:pointer; font-size:22px; color:#0d6efd;">
-    ⬅ Back
-</span>
+<span class="back-link" onclick="window.history.back()">← Back</span>
 
-<div class="container mt-4">
+<h1 class="page-title mb-4">SOC Analytics</h1>
 
-    <h2 class="fw-bold mb-4">SOC Analytics Dashboard</h2>
-
-    {% if not rows %}
-        <div class="alert alert-secondary">
-            No analytics available. Train model or ingest logs.
-        </div>
-    {% else %}
-
-    <!-- === CARDS SUMMARY === -->
-    <div class="row mb-4">
-        <div class="col-md-4">
-            <div class="card shadow-sm">
-                <div class="card-body">
-                    <h6 class="text-muted">Total Records</h6>
-                    <h3 class="fw-bold">{{ rows|length }}</h3>
-                </div>
-            </div>
-        </div>
-
-        <div class="col-md-4">
-            <div class="card shadow-sm">
-                <div class="card-body">
-                    <h6 class="text-muted">Unique Severities</h6>
-                    <h3 class="fw-bold" id="severityCountDisplay"></h3>
-                </div>
-            </div>
-        </div>
-
-        <div class="col-md-4">
-            <div class="card shadow-sm">
-                <div class="card-body">
-                    <h6 class="text-muted">ML Prediction Categories</h6>
-                    <h3 class="fw-bold" id="predictionCountDisplay"></h3>
-                </div>
-            </div>
-        </div>
+{% if not rows %}
+    <div class="alert alert-secondary">
+        No analytics available. Train model or ingest logs.
     </div>
+{% else %}
 
-    <!-- === CHARTS === -->
-    <div class="row">
-
-        <!-- Severity Bar Chart -->
-        <div class="col-md-6 mb-4">
-            <div class="card shadow-sm">
-                <div class="card-body">
-                    <h5 class="fw-bold mb-3">Severity Distribution</h5>
-                    <canvas id="severityChart"></canvas>
-                </div>
-            </div>
-        </div>
-
-        <!-- Prediction Pie Chart (if predictions exist) -->
-        <div class="col-md-6 mb-4">
-            <div class="card shadow-sm">
-                <div class="card-body">
-                    <h5 class="fw-bold mb-3">ML Prediction Distribution</h5>
-                    <canvas id="predictionChart"></canvas>
-                </div>
-            </div>
-        </div>
-
-        <!-- Alerts Over Time -->
-        <div class="col-md-12 mb-4">
-            <div class="card shadow-sm">
-                <div class="card-body">
-                    <h5 class="fw-bold mb-3">Alerts Over Time</h5>
-                    <canvas id="timeChart"></canvas>
-                </div>
-            </div>
-        </div>
+<div class="kpi-row mb-4">
+    <div class="kpi-tile" style="cursor:default;">
+        <span class="kpi-value">{{ rows|length }}</span>
+        <span class="kpi-label">Total Records</span>
     </div>
-
-    {% endif %}
+    <div class="kpi-tile" style="cursor:default;">
+        <span class="kpi-value" id="severityCountDisplay">—</span>
+        <span class="kpi-label">Unique Severities</span>
+    </div>
+    <div class="kpi-tile" style="cursor:default;">
+        <span class="kpi-value" id="predictionCountDisplay">—</span>
+        <span class="kpi-label">ML Categories</span>
+    </div>
 </div>
+
+<div class="row g-3">
+    <div class="col-md-6">
+        <div class="soc-panel h-100">
+            <h5 class="mb-3" style="font-size:0.95rem;letter-spacing:-0.02em;">Severity Distribution</h5>
+            <canvas id="severityChart"></canvas>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="soc-panel h-100">
+            <h5 class="mb-3" style="font-size:0.95rem;letter-spacing:-0.02em;">ML Prediction Distribution</h5>
+            <canvas id="predictionChart"></canvas>
+        </div>
+    </div>
+    <div class="col-md-12">
+        <div class="soc-panel">
+            <h5 class="mb-3" style="font-size:0.95rem;letter-spacing:-0.02em;">Alerts Over Time</h5>
+            <canvas id="timeChart"></canvas>
+        </div>
+    </div>
+</div>
+
+{% endif %}
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 <script>
 {% if rows %}
     const rows = {{ rows|tojson }};
+    const chartDefaults = {
+        color: '#8b9bb4',
+        borderColor: '#243041',
+    };
+    Chart.defaults.color = chartDefaults.color;
+    Chart.defaults.borderColor = chartDefaults.borderColor;
 
-    // ================================
-    // SEVERITY COUNT
-    // ================================
     const severityCount = {};
     rows.forEach(r => {
         const sev = r.severity ? r.severity.toLowerCase() : "unknown";
@@ -111,15 +79,21 @@
             datasets: [{
                 label: "Alerts",
                 data: Object.values(severityCount),
+                backgroundColor: "rgba(59, 130, 246, 0.55)",
+                borderColor: "#3b82f6",
                 borderWidth: 1
             }]
         },
-        options: { responsive: true }
+        options: {
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { color: 'rgba(36,48,65,0.6)' } },
+                y: { grid: { color: 'rgba(36,48,65,0.6)' }, beginAtZero: true }
+            }
+        }
     });
 
-    // ================================
-    // PREDICTION PIE CHART
-    // ================================
     const predictionCount = {};
     rows.forEach(r => {
         if (r.ml_prediction) {
@@ -136,16 +110,22 @@
             labels: Object.keys(predictionCount),
             datasets: [{
                 data: Object.values(predictionCount),
-                borderWidth: 1
+                backgroundColor: [
+                    "rgba(59,130,246,0.75)",
+                    "rgba(239,68,68,0.75)",
+                    "rgba(245,158,11,0.75)",
+                    "rgba(34,197,94,0.75)",
+                    "rgba(139,92,246,0.75)",
+                    "rgba(14,165,233,0.75)"
+                ],
+                borderColor: "#12181f",
+                borderWidth: 2
             }]
-        }
+        },
+        options: { responsive: true }
     });
 
-    // ================================
-    // ALERTS OVER TIME (Line Chart)
-    // ================================
     const timeSeries = {};
-
     rows.forEach(r => {
         if (r.timestamp) {
             const day = r.timestamp.split("T")[0];
@@ -160,12 +140,21 @@
             datasets: [{
                 label: "Alerts",
                 data: Object.values(timeSeries),
-                tension: 0.2,
-                fill: false,
-                borderWidth: 2
+                tension: 0.25,
+                fill: true,
+                backgroundColor: "rgba(59, 130, 246, 0.12)",
+                borderColor: "#3b82f6",
+                borderWidth: 2,
+                pointRadius: 3
             }]
         },
-        options: { responsive: true }
+        options: {
+            responsive: true,
+            scales: {
+                x: { grid: { color: 'rgba(36,48,65,0.6)' } },
+                y: { grid: { color: 'rgba(36,48,65,0.6)' }, beginAtZero: true }
+            }
+        }
     });
 
 {% endif %}
