@@ -58,7 +58,8 @@ a:hover {
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--soc-text) !important;
-  font-size: 1.05rem;
+  font-size: 0.98rem;
+  white-space: nowrap;
 }
 
 .soc-navbar .navbar-brand span {
