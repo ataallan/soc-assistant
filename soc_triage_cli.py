@@ -49,9 +49,11 @@ except Exception:
         print("⚠ train_ml_model fallback — no training performed for:", path)
 
 try:
-    from wazuh_integration import fetch_wazuh_alerts
+    from wazuh_integration import fetch_wazuh_alerts, fetch_wazuh_alert_details
 except Exception:
     def fetch_wazuh_alerts(limit=50):
+        return []
+    def fetch_wazuh_alert_details(limit=50):
         return []
 
 # ------------------------------------------------------------------------
@@ -384,22 +386,61 @@ def watch_csv(file_path, interval=5):
         print("⚠ CSV watcher error:", e)
 
 def watch_wazuh(interval=10):
+    """Poll Wazuh alerts with bounded dedup and backoff on transient errors."""
     print("🔗 Watching Wazuh alerts...")
     seen = set()
+    max_seen = 5000
+    failures = 0
 
     try:
         while True:
-            alerts = fetch_wazuh_alerts(limit=10)
-            for alert in alerts:
-                key = str(alert)
-                if key not in seen:
-                    analyze_and_predict(key)
-                    seen.add(key)
+            try:
+                details = fetch_wazuh_alert_details(limit=10)
+                failures = 0
+            except Exception as e:
+                failures += 1
+                wait = min(interval * (2 ** min(failures, 4)), 120)
+                print(f"⚠ Wazuh fetch failed ({e}); retry in {wait}s")
+                time.sleep(wait)
+                continue
+
+            if not details:
+                # empty can mean no alerts or auth/config issue; soft wait
+                time.sleep(interval)
+                continue
+
+            for alert in details:
+                summary = alert.get("summary") or alert.get("full_log") or str(alert)
+                key = summary
+                if key in seen:
+                    continue
+                seen.add(key)
+                if len(seen) > max_seen:
+                    # drop oldest-ish by rebuilding from a tail slice
+                    seen = set(list(seen)[-max_seen // 2:])
+
+                # Enrich triage input with Wazuh rule context when present
+                rule_bits = []
+                if alert.get("rule_id") is not None:
+                    rule_bits.append(f"rule_id={alert.get('rule_id')}")
+                if alert.get("rule_level") is not None:
+                    rule_bits.append(f"rule_level={alert.get('rule_level')}")
+                if alert.get("severity"):
+                    rule_bits.append(f"wazuh_severity={alert.get('severity')}")
+                if alert.get("agent"):
+                    rule_bits.append(f"agent={alert.get('agent')}")
+                enriched = summary
+                if rule_bits:
+                    enriched = f"{summary} ({', '.join(rule_bits)})"
+
+                analyze_and_predict(enriched)
+
             time.sleep(interval)
     except KeyboardInterrupt:
         print("🛑 Wazuh watcher stopped.")
     except Exception as e:
         print("⚠ Wazuh watcher error:", e)
+
 
 # ------------------------------------------------------------------------
 # CLI MENU

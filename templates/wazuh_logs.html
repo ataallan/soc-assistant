@@ -3,76 +3,91 @@
 
 {% block content %}
 
-<!-- Back Button -->
-<span onclick="window.history.back()" 
+<span onclick="window.history.back()"
       style="cursor:pointer; font-size:22px; color:#0d6efd;">
     ⬅ Back
 </span>
 
 <div class="container mt-4">
-
     <h2 class="mb-3">Recent Wazuh Alerts</h2>
 
-    <!-- Search -->
     <div class="row mb-3">
         <div class="col-md-6">
-            <input id="searchInput" 
-                   type="text" 
-                   class="form-control" 
-                   placeholder="Search alerts...">
+            <input id="searchInput"
+                   type="text"
+                   class="form-control"
+                   placeholder="Search alerts (agent, rule, severity, text)...">
         </div>
     </div>
 
-    {% if logs %}
-    <!-- Scrollable Alerts Box -->
-    <div id="alertsBox" style="
-        max-height: 500px;
-        overflow-y: auto;
-        border: 1px solid #ddd;
-        border-radius: 8px;
-    ">
+    {% set rows = alerts if alerts is defined and alerts else none %}
+    {% if rows %}
+    <div id="alertsBox" style="max-height: 560px; overflow-y: auto; border: 1px solid #ddd; border-radius: 8px;">
+        <table class="table table-sm table-hover mb-0" id="alertsTable">
+            <thead class="table-light" style="position: sticky; top: 0;">
+                <tr>
+                    <th>Time</th>
+                    <th>Severity</th>
+                    <th>Agent</th>
+                    <th>Rule</th>
+                    <th>Summary</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for a in rows %}
+                <tr class="alert-item"
+                    data-text="{{ (a.summary or a.full_log or '')|lower }} {{ (a.agent or '')|lower }} {{ (a.rule_description or '')|lower }} {{ (a.severity or '')|lower }}">
+                    <td style="white-space: nowrap;">{{ a.timestamp or '—' }}</td>
+                    <td>
+                        {% set sev = (a.severity or 'low')|lower %}
+                        <span class="badge
+                            {% if sev == 'critical' %}bg-danger
+                            {% elif sev == 'high' %}bg-warning text-dark
+                            {% elif sev == 'medium' %}bg-info text-dark
+                            {% else %}bg-secondary{% endif %}">
+                            {{ sev }}
+                        </span>
+                        {% if a.rule_level is not none %}
+                        <small class="text-muted">L{{ a.rule_level }}</small>
+                        {% endif %}
+                    </td>
+                    <td>{{ a.agent or '—' }}</td>
+                    <td>
+                        {% if a.rule_id %}<code>{{ a.rule_id }}</code>{% endif %}
+                        {{ a.rule_description or '' }}
+                    </td>
+                    <td style="max-width: 420px;">
+                        <div style="max-height: 4.5em; overflow: hidden;" title="{{ a.full_log or a.summary }}">
+                            {{ a.summary or a.full_log }}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% elif logs %}
+    <div id="alertsBox" style="max-height: 500px; overflow-y: auto; border: 1px solid #ddd; border-radius: 8px;">
         <ul id="alertsList" class="list-group mb-0">
             {% for alert in logs %}
-            <li class="list-group-item alert-item"
-                data-text="{{ alert|lower }}">
-                {{ alert }}
-            </li>
+            <li class="list-group-item alert-item" data-text="{{ alert|lower }}">{{ alert }}</li>
             {% endfor %}
         </ul>
     </div>
-
     {% else %}
-    <div class="alert alert-secondary mt-3">No Wazuh alerts available.</div>
+    <div class="alert alert-secondary mt-3">No Wazuh alerts available. Check WAZUH_API / WAZUH_USER / WAZUH_PASS in <code>.env</code>.</div>
     {% endif %}
 </div>
 
-
-<!-- SEARCH SCRIPT -->
 <script>
 document.getElementById("searchInput").addEventListener("keyup", function () {
     const query = this.value.toLowerCase();
-    const items = document.querySelectorAll(".alert-item");
-
-    items.forEach(item => {
-        let textMatch = item.dataset.text.includes(query);
-        item.style.display = textMatch ? "" : "none";
+    document.querySelectorAll(".alert-item").forEach(item => {
+        const hay = (item.dataset.text || item.textContent || "").toLowerCase();
+        item.style.display = hay.includes(query) ? "" : "none";
     });
 });
-</script>
-
-<!-- AUTO-REFRESH SCRIPT -->
-<script>
-setInterval(() => {
-    fetch(window.location.href)
-    .then(response => response.text())
-    .then(html => {
-        const parser = new DOMParser();
-        const newDoc = parser.parseFromString(html, "text/html");
-
-        const newList = newDoc.querySelector("#alertsList").innerHTML;
-        document.querySelector("#alertsList").innerHTML = newList;
-    });
-}, 10000); // refresh every 10 seconds
+setInterval(() => { window.location.reload(); }, 15000);
 </script>
 
 {% endblock %}

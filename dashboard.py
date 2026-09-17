@@ -37,9 +37,10 @@ except Exception as e:
 # WAZUH FALLBACK
 # -------------------------------------------------
 try:
-    from wazuh_integration import fetch_wazuh_alerts
+    from wazuh_integration import fetch_wazuh_alerts, fetch_wazuh_alert_details
 except Exception:
     def fetch_wazuh_alerts(limit=50): return []
+    def fetch_wazuh_alert_details(limit=50): return []
 
 # -------------------------------------------------
 # FLASK
@@ -264,8 +265,11 @@ def view_csv_logs():
 @app.route("/logs/wazuh")
 @login_required
 def view_wazuh_logs():
-    logs = fetch_wazuh_alerts(limit=50)
-    return render_template("wazuh_logs.html", logs=logs)
+    details = fetch_wazuh_alert_details(limit=50)
+    # Keep string list available for older template fallbacks
+    logs = [d.get("summary") or d.get("full_log") or str(d) for d in details]
+    return render_template("wazuh_logs.html", alerts=details, logs=logs)
+
 
 # -------------------------------------------------
 # BLOCK / UNBLOCK

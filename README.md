@@ -56,6 +56,18 @@ Flask templates live under `templates/` (login, register, 2FA, home, reports, et
 
 ## Wazuh (optional)
 
+
+### Wazuh watcher
+
+1. Copy `.env.example` to `.env` and set `WAZUH_API`, `WAZUH_USER`, `WAZUH_PASS`.
+2. Train once (`python train_model.py`) so triage has a model.
+3. CLI: choose **Watch Wazuh Alerts**, or in the dashboard start the Wazuh watcher / open **Wazuh logs**.
+4. Alerts are parsed into rule/agent/severity fields when the API returns them; triage still accepts plain strings.
+
+If `WAZUH_PASS` is empty, auth is skipped and the watcher returns no alerts (safe offline demo).
+
+## Wazuh (optional)
+
 Set in `.env`:
 
 - `WAZUH_API` (default `https://localhost:55000`)
