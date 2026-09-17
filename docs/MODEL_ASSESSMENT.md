@@ -65,14 +65,15 @@ On a tiny, synthetic-looking sample set, high accuracy is **not** evidence the m
 - Loads artifacts at import (`load_ml_model`).
 - `analyze_log()` hybrid policy:
   1. If rules say **`critical`** → keep **`critical`**.
-  2. Else if ML missing or `max(proba) < 0.55` → use **rule severity**.
+  2. Else if ML missing or `max(proba) < ML_CONFIDENCE_THRESHOLD` (default **0.70**) → use **rule severity**.
   3. Else use **ML severity**.
 - **`recommendation`** (`escalate` / `investigate` / `ignore`) always comes from **`rule_based_triage(log)`**.
+- **`should_auto_contain()`** — separate gate for automatic blocks (agreement / rules_critical / rules_only / disagreement / low_confidence).
 
 ### `soc_triage_cli.py`
 
-- Parallel ML path for `ml_prediction` column (same text + hour features).
-- Block/email decisions follow `analyze_log()` severity (high/critical).
+- Parallel ML path for `ml_prediction` + confidence columns (same text + hour features).
+- Auto-block/email only when the agreement gate allows; skipped containment is logged with an operator-friendly note.
 
 ### Dashboard
 
@@ -100,10 +101,10 @@ On a tiny, synthetic-looking sample set, high accuracy is **not** evidence the m
 Prioritized for Allan after the capstone:
 
 1. **More labeled data** — thousands of analyst-labeled alerts (include `critical`); stratify by Wazuh rule id / MITRE tactic.
-2. **Time-split validation** — train on past alerts, test on future (reduces leakage from reused IPs/usernames).
-3. **Calibration** — keep / expand `CalibratedClassifierCV` or temperature scaling; tune escalate thresholds for precision on `high`.
-4. **Ensemble with rules** — require rule+ML agreement before any auto-containment; ML ranks medium/unknown only.
-5. **No auto-block on ML alone** — keep dry-run / human approval for containment (already the safe default).
+2. **Time-split validation** — ✅ **implemented (light):** `evaluate_model.py` prefers a time-ordered hold-out (sort by `timestamp`, last 30% test) when timestamps parse; random stratified remains as comparison. Primary “honest” metrics in `evaluation_report.md` are the time-split when available.
+3. **Calibration / confidence threshold** — ✅ **implemented:** `ML_CONFIDENCE_THRESHOLD` (default **0.70**, via `.env`) gates auto-containment when ML is used; hybrid severity still falls back to rules on low confidence. Further calibration (temperature scaling, etc.) still optional.
+4. **Ensemble with rules** — ✅ **implemented:** `should_auto_contain()` requires rule escalate **and** ML agreement on high (or rules-`critical` alone) before automatic containment.
+5. **No auto-block on ML alone** — ✅ **implemented:** disagreement / low confidence skips containment with an operator-friendly note; ML-missing falls back to `rules_only` audit; containment modes (`simulated` / preview / stub) unchanged.
 6. **Richer features (later)** — rule_id, agent role, geo/ASN, failure counts; still avoid raw IP-as-int as a primary signal.
 7. **Optional LightGBM / XGBoost later** — only after N is larger and deps are justified; sklearn RF/LogReg are enough for the demo.
 8. **Ops** — drift checks, human-in-the-loop review queue, periodic retrain with fresh labels.
@@ -113,6 +114,8 @@ Prioritized for Allan after the capstone:
 - Text-first TF-IDF bigrams; dropped memorization-prone IP/raw timestamp.
 - Stratified CV model pick + full-data refit for artifacts.
 - Soft hybrid: critical rules win; low ML confidence → rules.
+- **Rule+ML agreement gate** for auto-containment (`should_auto_contain`) + env confidence threshold.
+- Time-ordered hold-out in `evaluate_model.py` (primary) alongside random stratified.
 - Honest docs: this file + `evaluate_model.py` hold-out (does not overwrite full-data `.pkl`).
 
 ---

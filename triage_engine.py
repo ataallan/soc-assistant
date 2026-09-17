@@ -11,8 +11,21 @@ VECTORIZER_FILE = "vectorizer.pkl"
 SCALER_FILE = "scaler.pkl"
 LABEL_ENCODER_FILE = "label_encoder.pkl"
 
-# If ML max probability is below this, prefer rule-based severity.
-ML_CONFIDENCE_THRESHOLD = 0.55
+# Default ML confidence for hybrid severity + auto-containment (override via env).
+def get_ml_confidence_threshold() -> float:
+    """Read ML_CONFIDENCE_THRESHOLD from env; default 0.70."""
+    raw = os.environ.get("ML_CONFIDENCE_THRESHOLD", "0.70")
+    try:
+        val = float(raw)
+        if 0.0 <= val <= 1.0:
+            return val
+    except (TypeError, ValueError):
+        pass
+    return 0.70
+
+
+# Back-compat module attribute (tests / callers may read it).
+ML_CONFIDENCE_THRESHOLD = get_ml_confidence_threshold()
 
 # -------------------- Helper Functions --------------------
 
@@ -154,7 +167,7 @@ def analyze_log(log: str, event_type="", description="", username="", timestamp=
 
     if rule_severity == "critical":
         severity = "critical"
-    elif ml_severity is None or ml_confidence < ML_CONFIDENCE_THRESHOLD:
+    elif ml_severity is None or ml_confidence < get_ml_confidence_threshold():
         severity = rule_severity
     else:
         severity = ml_severity
@@ -168,5 +181,98 @@ def analyze_log(log: str, event_type="", description="", username="", timestamp=
         "severity": severity,
         "recommendation": recommendation,
         "ml_confidence": ml_confidence,
+        "ml_severity": ml_severity,
         "rule_severity": rule_severity,
     }
+
+
+# -------------------- Auto-containment agreement gate --------------------
+
+_ESCALATE_SEVERITIES = frozenset({"high", "critical"})
+_ML_HIGH_AGREE = frozenset({"high", "critical"})  # ML has no critical class; map both
+
+
+def should_auto_contain(
+    rule_severity: str,
+    ml_severity=None,
+    ml_confidence: float = 0.0,
+    threshold: float = None,
+) -> dict:
+    """Decide whether automatic containment is allowed.
+
+    Policy:
+    - Rules must escalate (high/critical).
+    - Rules ``critical`` alone may contain (audit: rules_critical).
+    - Otherwise ML must agree on high/critical with confidence >= threshold.
+    - If ML is missing: rules-only escalate may contain (audit: rules_only).
+    - Disagreement or low confidence → do not contain.
+
+    Returns dict: allow, reason, operator_note, threshold, rule_severity,
+    ml_severity, ml_confidence.
+    """
+    if threshold is None:
+        threshold = get_ml_confidence_threshold()
+
+    rule_sev = (rule_severity or "low").strip().lower()
+    ml_sev = None if ml_severity is None else str(ml_severity).strip().lower()
+    try:
+        conf = float(ml_confidence or 0.0)
+    except (TypeError, ValueError):
+        conf = 0.0
+
+    base = {
+        "rule_severity": rule_sev,
+        "ml_severity": ml_sev,
+        "ml_confidence": conf,
+        "threshold": float(threshold),
+    }
+
+    if rule_sev not in _ESCALATE_SEVERITIES:
+        return {
+            **base,
+            "allow": False,
+            "reason": "rules_not_escalate",
+            "operator_note": "Containment skipped — rules did not call for escalation.",
+        }
+
+    # Critical from rules: allow without requiring ML agreement.
+    if rule_sev == "critical":
+        return {
+            **base,
+            "allow": True,
+            "reason": "rules_critical",
+            "operator_note": "Containment allowed — rules marked critical (rules-only override).",
+        }
+
+    # ML unavailable → rules-only for escalate (high).
+    if ml_sev is None:
+        return {
+            **base,
+            "allow": True,
+            "reason": "rules_only",
+            "operator_note": "Containment allowed — rules escalate; ML model unavailable (rules_only).",
+        }
+
+    if conf < float(threshold):
+        return {
+            **base,
+            "allow": False,
+            "reason": "low_confidence",
+            "operator_note": "Containment skipped — model confidence below threshold.",
+        }
+
+    if ml_sev not in _ML_HIGH_AGREE:
+        return {
+            **base,
+            "allow": False,
+            "reason": "disagreement",
+            "operator_note": "Containment skipped — model and rules did not agree.",
+        }
+
+    return {
+        **base,
+        "allow": True,
+        "reason": "agreement",
+        "operator_note": "Containment allowed — rules and model agree on high severity.",
+    }
+

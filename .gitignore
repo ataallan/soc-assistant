@@ -37,3 +37,6 @@ data/users.csv
 # Large generated reports at repo root if present
 triage_report.csv
 triage_report.jsonl
+
+# Containment audit trail (runtime)
+data/containment_audit.jsonl

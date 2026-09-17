@@ -126,6 +126,10 @@ Without a password, Wazuh calls will fail gracefully and return no alerts.
 - Do not commit real passwords, App Passwords, or API tokens.
 - Treat this as a **local demo / academic** project, not production SOC tooling.
 
+## Ops / Safety (auto-containment)
+
+Automatic IP/user blocks from triage **require rule + ML agreement** (or rules marking **critical**). When the model is used, confidence must be ≥ `ML_CONFIDENCE_THRESHOLD` (default **0.70** in `.env.example`). If rules and the model disagree, or confidence is low, containment is **skipped** and the report/console shows a short note such as *“Containment skipped — model and rules did not agree.”* Manual block/unblock from the dashboard is unchanged. Containment modes (`simulated` / preview / stub) still do not talk to a real firewall unless you point stub at one.
+
 ## Project layout
 
 | Path | Role |

@@ -33,7 +33,10 @@ REPORT_FIELDS = [
     "user",
     "severity",
     "rule_based",
-    "ml_prediction"
+    "ml_prediction",
+    "ml_confidence",
+    "containment_decision",
+    "containment_note",
 ]
 
 def normalize_report_row(result: dict):
@@ -47,10 +50,27 @@ def normalize_report_row(result: dict):
 # SAFE IMPORTS
 # ------------------------------------------------------------------------
 try:
-    from triage_engine import analyze_log
+    from triage_engine import analyze_log, should_auto_contain, classify_severity, get_ml_confidence_threshold
 except Exception:
     def analyze_log(log, **kwargs):
         return {"severity": "low", "recommendation": "monitor", "user": None, "ip": None}
+
+    def classify_severity(log):
+        return "low"
+
+    def get_ml_confidence_threshold():
+        return 0.70
+
+    def should_auto_contain(rule_severity, ml_severity=None, ml_confidence=0.0, threshold=None):
+        return {
+            "allow": False,
+            "reason": "unavailable",
+            "operator_note": "Containment skipped — triage gate unavailable.",
+            "rule_severity": rule_severity,
+            "ml_severity": ml_severity,
+            "ml_confidence": ml_confidence,
+            "threshold": threshold or 0.70,
+        }
 
 try:
     from train_model import train_ml_model
@@ -218,9 +238,10 @@ def analyze_and_predict(log: str, event_type="", description="", username="", ti
     print(f"\n📝 LOG: {log}")
 
     # -----------------------------
-    # ML Prediction Block
+    # ML Prediction Block (label + confidence)
     # -----------------------------
     ml_pred = None
+    ml_confidence = 0.0
     try:
         load_model_once()
 
@@ -243,7 +264,15 @@ def analyze_and_predict(log: str, event_type="", description="", username="", ti
             y_raw = MODEL.predict(X_final)[0]
             ml_pred = LABEL_ENCODER.inverse_transform([y_raw])[0]
 
-            print(f"🤖 ML Prediction: {ml_pred}")
+            if hasattr(MODEL, "predict_proba"):
+                try:
+                    import numpy as np
+                    proba = MODEL.predict_proba(X_final)[0]
+                    ml_confidence = float(np.max(proba))
+                except Exception:
+                    ml_confidence = 0.0
+
+            print(f"🤖 ML Prediction: {ml_pred} (confidence={ml_confidence:.2f})")
 
     except Exception as e:
         print("⚠ ML Error:", e)
@@ -258,10 +287,29 @@ def analyze_and_predict(log: str, event_type="", description="", username="", ti
     recommendation = result.get("recommendation", "")
     user = result.get("user")
     ip = result.get("ip")
+    rule_severity = str(result.get("rule_severity") or classify_severity(log)).lower()
+    # Prefer ML fields from analyze_log when CLI parallel path missed them
+    if ml_pred is None and result.get("ml_severity") is not None:
+        ml_pred = result.get("ml_severity")
+    if result.get("ml_confidence") is not None:
+        try:
+            ml_confidence = float(result.get("ml_confidence") or ml_confidence)
+        except (TypeError, ValueError):
+            pass
 
-    # HIGH / CRITICAL → BLOCK
-    if severity in ["high", "critical"]:
-        print("🚨 HIGH/CRITICAL → IMMEDIATE BLOCK")
+    # Agreement gate before any auto-containment
+    gate = should_auto_contain(
+        rule_severity=rule_severity,
+        ml_severity=ml_pred,
+        ml_confidence=ml_confidence,
+        threshold=get_ml_confidence_threshold(),
+    )
+    contain_reason = gate["reason"]
+    contain_note = gate["operator_note"]
+    did_contain = False
+
+    if gate["allow"] and rule_severity in ("high", "critical"):
+        print(f"🚨 AUTO-CONTAIN ({contain_reason}): {contain_note}")
 
         if ip:
             execute_block_ip(ip)
@@ -270,7 +318,9 @@ def analyze_and_predict(log: str, event_type="", description="", username="", ti
 
         send_email(
             f"🚨 Immediate Block ({severity.upper()})",
-            f"Severity: {severity}\nUser: {user}\nIP: {ip}\n\nLog:\n{log}"
+            f"Severity: {severity}\nRule: {rule_severity}\nML: {ml_pred} "
+            f"(conf={ml_confidence:.2f})\nGate: {contain_reason}\n"
+            f"User: {user}\nIP: {ip}\n\nLog:\n{log}\n\nNote: {contain_note}"
         )
 
         entry = {
@@ -278,7 +328,9 @@ def analyze_and_predict(log: str, event_type="", description="", username="", ti
             "severity": severity,
             "user": user,
             "ip": ip,
-            "log": log
+            "log": log,
+            "containment_decision": contain_reason,
+            "containment_note": contain_note,
         }
 
         try:
@@ -293,9 +345,12 @@ def analyze_and_predict(log: str, event_type="", description="", username="", ti
             print("⚠ High risk logging error:", e)
 
         recommendation = "escalate"
+        did_contain = True
 
-    elif recommendation == "escalate":
-        print("⚠ Escalation — Monitor and review.")
+    elif rule_severity in ("high", "critical") or recommendation == "escalate":
+        # Escalation signal but gate denied — do not block
+        print(f"⚠ {contain_note}")
+        print(f"   (triage logged; reason={contain_reason})")
 
     elif severity == "medium":
         print("🔍 Medium severity — monitor.")
@@ -303,15 +358,18 @@ def analyze_and_predict(log: str, event_type="", description="", username="", ti
     else:
         print("ℹ Low severity — no action.")
 
-    # SAVE RESULT
+    # SAVE RESULT (always include containment decision for operator visibility)
     save_to_reports({
         "timestamp": datetime.now(),
         "log": log,
         "ml_prediction": ml_pred,
+        "ml_confidence": round(ml_confidence, 4) if ml_pred is not None else None,
         "rule_based": recommendation,
         "severity": severity,
         "user": user,
-        "ip": ip
+        "ip": ip,
+        "containment_decision": contain_reason if (did_contain or rule_severity in ("high", "critical") or recommendation == "escalate") else "n/a",
+        "containment_note": contain_note if (did_contain or rule_severity in ("high", "critical") or recommendation == "escalate") else "",
     })
 
 # ------------------------------------------------------------------------
