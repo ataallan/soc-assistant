@@ -170,3 +170,7 @@ Automatic IP/user blocks from triage **require rule + ML agreement** (or rules m
 ## License
 
 Capstone / academic use. Contact the author for other licensing.
+
+## Start on Windows
+
+Double-click `start_dashboard.bat` (or the Desktop shortcut **AI-Powered SOC Assistant**), then open http://127.0.0.1:5000
