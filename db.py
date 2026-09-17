@@ -1,14 +1,19 @@
 """
-SQLite storage for the AI SOC Assistant.
+Flexible storage for the AI SOC Assistant (SQLAlchemy 2.x).
+
+Default backend: SQLite at data/soc_assistant.db (SOC_DB_PATH).
+Optional: PostgreSQL when SOC_DATABASE_URL or DATABASE_URL is set.
 
 Source of truth for triage events, containment blocks, and containment audit.
 CSV / JSON files remain for one-time migration and optional export only.
 
 Env:
-  SOC_DB_PATH  — default data/soc_assistant.db
+  SOC_DB_PATH         — SQLite file path (default data/soc_assistant.db)
+  SOC_DATABASE_URL    — preferred Postgres (or other) SQLAlchemy URL
+  DATABASE_URL        — fallback URL (same semantics)
 
-Thread safety: check_same_thread=False + RLock; WAL mode enabled.
-Schema is plain SQL (SQLAlchemy-friendly column names for a future Postgres move).
+Thread safety: process RLock around writes; SQLite uses check_same_thread=False
+and WAL mode. Postgres uses pool_pre_ping and modest pool sizing.
 """
 
 from __future__ import annotations
@@ -17,16 +22,31 @@ import csv
 import json
 import logging
 import os
-import sqlite3
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Generator, List, Optional, Union
+
+from sqlalchemy import (
+    CheckConstraint,
+    Float,
+    Integer,
+    MetaData,
+    Text,
+    create_engine,
+    event,
+    func,
+    select,
+)
+from sqlalchemy.engine import Engine, make_url
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 logger = logging.getLogger(__name__)
 
 _lock = threading.RLock()
-_conn: Optional[sqlite3.Connection] = None
+_engines: Dict[str, Engine] = {}
+_session_factories: Dict[str, sessionmaker] = {}
 
 # Legacy file paths (migration / optional export only)
 DATA_DIR = Path("data")
@@ -34,46 +54,64 @@ LEGACY_TRIAGE_CSV = DATA_DIR / "triage_report.csv"
 LEGACY_BLOCKED_JSON = DATA_DIR / "blocked_entities.json"
 LEGACY_AUDIT_JSONL = DATA_DIR / "containment_audit.jsonl"
 
-SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS triage_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT,
-    log TEXT,
-    severity TEXT,
-    ml_prediction TEXT,
-    ml_confidence REAL,
-    rule_based TEXT,
-    "user" TEXT,
-    ip TEXT,
-    containment_decision TEXT,
-    containment_note TEXT,
-    source TEXT,
-    raw_json TEXT
-);
+convention = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
 
-CREATE TABLE IF NOT EXISTS containment_blocks (
-    entity_type TEXT NOT NULL CHECK(entity_type IN ('ip', 'user')),
-    entity_value TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    mode TEXT,
-    note TEXT,
-    PRIMARY KEY (entity_type, entity_value)
-);
 
-CREATE TABLE IF NOT EXISTS containment_audit (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts TEXT NOT NULL,
-    action TEXT NOT NULL,
-    entity_type TEXT,
-    entity_value TEXT,
-    mode TEXT,
-    detail TEXT
-);
+class Base(DeclarativeBase):
+    metadata = MetaData(naming_convention=convention)
 
-CREATE INDEX IF NOT EXISTS idx_triage_timestamp ON triage_events(timestamp);
-CREATE INDEX IF NOT EXISTS idx_triage_severity ON triage_events(severity);
-CREATE INDEX IF NOT EXISTS idx_audit_ts ON containment_audit(ts);
-"""
+
+class TriageEvent(Base):
+    __tablename__ = "triage_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[Optional[str]] = mapped_column(Text, nullable=True, index=True)
+    log: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    severity: Mapped[Optional[str]] = mapped_column(Text, nullable=True, index=True)
+    ml_prediction: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ml_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    rule_based: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    user: Mapped[Optional[str]] = mapped_column("user", Text, nullable=True)
+    ip: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    containment_decision: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    containment_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    raw_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class ContainmentBlock(Base):
+    __tablename__ = "containment_blocks"
+    __table_args__ = (
+        CheckConstraint(
+            "entity_type IN ('ip', 'user')",
+            name="entity_type",
+        ),
+    )
+
+    entity_type: Mapped[str] = mapped_column(Text, primary_key=True)
+    entity_value: Mapped[str] = mapped_column(Text, primary_key=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    mode: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class ContainmentAudit(Base):
+    __tablename__ = "containment_audit"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    entity_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    mode: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
 
 TRIAGE_COLUMNS = [
     "id",
@@ -101,63 +139,178 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def get_connection(db_path: Optional[Path | str] = None) -> sqlite3.Connection:
-    """Return a process-wide connection (or a one-off for a custom path in tests)."""
-    global _conn
-    path = Path(db_path) if db_path is not None else get_db_path()
+def _normalize_database_url(url: str) -> str:
+    """Normalize common Postgres URL forms to a SQLAlchemy 2.x URL."""
+    url = url.strip()
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://") :]
+    # Prefer psycopg3 driver when no driver is specified
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url[len("postgresql://") :]
+    return url
+
+
+def get_database_url(db_path: Optional[Path | str] = None) -> str:
+    """
+    Resolve the SQLAlchemy database URL.
+
+    - Explicit db_path (tests / one-off) → always SQLite for that file
+    - Else SOC_DATABASE_URL or DATABASE_URL → Postgres (or whatever URL says)
+    - Else SQLite via SOC_DB_PATH
+    """
+    if db_path is not None:
+        path = Path(db_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return f"sqlite:///{path.resolve().as_posix()}"
+
+    env_url = (
+        (os.environ.get("SOC_DATABASE_URL") or "").strip()
+        or (os.environ.get("DATABASE_URL") or "").strip()
+    )
+    if env_url:
+        return _normalize_database_url(env_url)
+
+    path = get_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    return f"sqlite:///{path.resolve().as_posix()}"
 
+
+def resolve_database_url(db_path: Optional[Path | str] = None) -> str:
+    """Alias for get_database_url (public helper)."""
+    return get_database_url(db_path)
+
+
+def is_postgres_url(url: Optional[str] = None) -> bool:
+    raw = url if url is not None else get_database_url()
+    try:
+        return make_url(raw).get_backend_name() == "postgresql"
+    except Exception:
+        return raw.startswith("postgresql")
+
+
+def _create_engine(url: str) -> Engine:
+    backend = make_url(url).get_backend_name()
+    if backend == "sqlite":
+        engine = create_engine(
+            url,
+            connect_args={"check_same_thread": False},
+            pool_pre_ping=True,
+        )
+
+        @event.listens_for(engine, "connect")
+        def _sqlite_on_connect(dbapi_conn, _connection_record):  # noqa: ANN001
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+        return engine
+
+    # Postgres (and other server backends): sensible pool defaults
+    return create_engine(
+        url,
+        pool_size=5,
+        max_overflow=10,
+        pool_pre_ping=True,
+        pool_recycle=1800,
+    )
+
+
+def get_engine(db_path: Optional[Path | str] = None) -> Engine:
+    """Return a cached Engine for the resolved URL (or explicit SQLite path)."""
+    url = get_database_url(db_path)
     with _lock:
-        # Dedicated connection when caller passes an explicit path (unit tests)
-        if db_path is not None:
-            conn = sqlite3.connect(str(path), check_same_thread=False)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA foreign_keys=ON")
-            return conn
+        if url not in _engines:
+            _engines[url] = _create_engine(url)
+            _session_factories[url] = sessionmaker(
+                bind=_engines[url],
+                autoflush=False,
+                autocommit=False,
+                expire_on_commit=False,
+            )
+        return _engines[url]
 
-        if _conn is None:
-            _conn = sqlite3.connect(str(path), check_same_thread=False)
-            _conn.row_factory = sqlite3.Row
-            _conn.execute("PRAGMA journal_mode=WAL")
-            _conn.execute("PRAGMA foreign_keys=ON")
-        return _conn
+
+def _session_factory(db_path: Optional[Path | str] = None) -> sessionmaker:
+    url = get_database_url(db_path)
+    get_engine(db_path)  # ensure cached
+    return _session_factories[url]
+
+
+@contextmanager
+def session_scope(
+    db_path: Optional[Path | str] = None,
+) -> Generator[Session, None, None]:
+    """Provide a transactional scope around a series of operations."""
+    factory = _session_factory(db_path)
+    session = factory()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def reset_connection() -> None:
-    """Close and clear the global connection (tests / path changes)."""
-    global _conn
+    """Dispose and clear cached engines (tests / path or URL changes)."""
+    global _engines, _session_factories
     with _lock:
-        if _conn is not None:
+        for eng in _engines.values():
             try:
-                _conn.close()
+                eng.dispose()
             except Exception:
                 pass
-            _conn = None
+        _engines = {}
+        _session_factories = {}
 
 
-def init_db(db_path: Optional[Path | str] = None) -> Path:
-    """Create tables if needed. Returns the DB path used."""
-    path = Path(db_path) if db_path is not None else get_db_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if db_path is not None:
-        conn = get_connection(path)
-        try:
-            with _lock:
-                conn.executescript(SCHEMA_SQL)
-                conn.commit()
-        finally:
-            conn.close()
-    else:
-        conn = get_connection()
-        with _lock:
-            conn.executescript(SCHEMA_SQL)
-            conn.commit()
-    return path
+def reset_engine() -> None:
+    """Alias for reset_connection."""
+    reset_connection()
 
 
-def _row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
-    return {k: row[k] for k in row.keys()}
+def init_db(db_path: Optional[Path | str] = None) -> Union[Path, str]:
+    """Create tables if needed. Returns SQLite Path or database URL string."""
+    engine = get_engine(db_path)
+    with _lock:
+        Base.metadata.create_all(engine)
+    url = get_database_url(db_path)
+    if make_url(url).get_backend_name() == "sqlite":
+        return Path(db_path) if db_path is not None else get_db_path()
+    return url
+
+
+def _triage_to_dict(row: TriageEvent) -> Dict[str, Any]:
+    return {
+        "id": row.id,
+        "timestamp": row.timestamp,
+        "log": row.log,
+        "severity": row.severity,
+        "ml_prediction": row.ml_prediction,
+        "ml_confidence": row.ml_confidence,
+        "rule_based": row.rule_based,
+        "user": row.user,
+        "ip": row.ip,
+        "containment_decision": row.containment_decision,
+        "containment_note": row.containment_note,
+        "source": row.source,
+        "raw_json": row.raw_json,
+    }
+
+
+def _audit_to_dict(row: ContainmentAudit) -> Dict[str, Any]:
+    return {
+        "id": row.id,
+        "ts": row.ts,
+        "action": row.action,
+        "entity_type": row.entity_type,
+        "entity_value": row.entity_value,
+        "mode": row.mode,
+        "detail": row.detail,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -171,15 +324,7 @@ def insert_triage_event(
     source: Optional[str] = None,
 ) -> int:
     """Insert one triage event. Returns new row id."""
-    path = Path(db_path) if db_path is not None else None
-    if path is not None:
-        init_db(path)
-        conn = get_connection(path)
-        own = True
-    else:
-        init_db()
-        conn = get_connection()
-        own = False
+    init_db(db_path)
 
     ts = event.get("timestamp")
     if hasattr(ts, "isoformat"):
@@ -201,33 +346,25 @@ def insert_triage_event(
         except Exception:
             raw = None
 
-    sql = """
-        INSERT INTO triage_events (
-            timestamp, log, severity, ml_prediction, ml_confidence,
-            rule_based, "user", ip, containment_decision, containment_note,
-            source, raw_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """
-    values = (
-        ts,
-        event.get("log"),
-        event.get("severity"),
-        event.get("ml_prediction"),
-        ml_conf,
-        event.get("rule_based"),
-        event.get("user"),
-        event.get("ip"),
-        event.get("containment_decision"),
-        event.get("containment_note"),
-        src,
-        raw,
+    row = TriageEvent(
+        timestamp=ts,
+        log=event.get("log"),
+        severity=event.get("severity"),
+        ml_prediction=event.get("ml_prediction"),
+        ml_confidence=ml_conf,
+        rule_based=event.get("rule_based"),
+        user=event.get("user"),
+        ip=event.get("ip"),
+        containment_decision=event.get("containment_decision"),
+        containment_note=event.get("containment_note"),
+        source=src,
+        raw_json=raw,
     )
     with _lock:
-        cur = conn.execute(sql, values)
-        conn.commit()
-        row_id = int(cur.lastrowid)
-    if own:
-        conn.close()
+        with session_scope(db_path) as session:
+            session.add(row)
+            session.flush()
+            row_id = int(row.id)
     return row_id
 
 
@@ -244,30 +381,16 @@ def list_triage_events(
     view: total | severe | escalated (same semantics as report_filters).
     Optional severity exact filter (case-insensitive) applied before view filter.
     """
-    path = Path(db_path) if db_path is not None else None
-    if path is not None:
-        init_db(path)
-        conn = get_connection(path)
-        own = True
-    else:
-        init_db()
-        conn = get_connection()
-        own = False
-
+    init_db(db_path)
     with _lock:
-        rows = conn.execute(
-            """
-            SELECT id, timestamp, log, severity, ml_prediction, ml_confidence,
-                   rule_based, "user", ip, containment_decision, containment_note,
-                   source, raw_json
-            FROM triage_events
-            ORDER BY timestamp DESC, id DESC
-            """
-        ).fetchall()
-    if own:
-        conn.close()
-
-    events = [_row_to_dict(r) for r in rows]
+        with session_scope(db_path) as session:
+            rows = session.scalars(
+                select(TriageEvent).order_by(
+                    TriageEvent.timestamp.desc(),
+                    TriageEvent.id.desc(),
+                )
+            ).all()
+            events = [_triage_to_dict(r) for r in rows]
 
     if severity:
         sev = severity.strip().lower()
@@ -338,19 +461,10 @@ def count_alerts(db_path: Optional[Path | str] = None) -> Dict[str, int]:
 
 
 def triage_event_count(db_path: Optional[Path | str] = None) -> int:
-    path = Path(db_path) if db_path is not None else None
-    if path is not None:
-        init_db(path)
-        conn = get_connection(path)
-        own = True
-    else:
-        init_db()
-        conn = get_connection()
-        own = False
+    init_db(db_path)
     with _lock:
-        n = int(conn.execute("SELECT COUNT(*) FROM triage_events").fetchone()[0])
-    if own:
-        conn.close()
+        with session_scope(db_path) as session:
+            n = int(session.scalar(select(func.count()).select_from(TriageEvent)) or 0)
     return n
 
 
@@ -359,27 +473,16 @@ def triage_event_count(db_path: Optional[Path | str] = None) -> int:
 # ---------------------------------------------------------------------------
 
 def load_blocks(db_path: Optional[Path | str] = None) -> Dict[str, list]:
-    path = Path(db_path) if db_path is not None else None
-    if path is not None:
-        init_db(path)
-        conn = get_connection(path)
-        own = True
-    else:
-        init_db()
-        conn = get_connection()
-        own = False
+    init_db(db_path)
     with _lock:
-        rows = conn.execute(
-            "SELECT entity_type, entity_value FROM containment_blocks"
-        ).fetchall()
-    if own:
-        conn.close()
-    out: Dict[str, list] = {"ips": [], "users": []}
-    for r in rows:
-        if r["entity_type"] == "ip":
-            out["ips"].append(r["entity_value"])
-        elif r["entity_type"] == "user":
-            out["users"].append(r["entity_value"])
+        with session_scope(db_path) as session:
+            rows = session.scalars(select(ContainmentBlock)).all()
+            out: Dict[str, list] = {"ips": [], "users": []}
+            for r in rows:
+                if r.entity_type == "ip":
+                    out["ips"].append(r.entity_value)
+                elif r.entity_type == "user":
+                    out["users"].append(r.entity_value)
     return out
 
 
@@ -397,37 +500,22 @@ def save_block(
     if entity_type not in ("ip", "user") or not entity_value:
         return False
 
-    path = Path(db_path) if db_path is not None else None
-    if path is not None:
-        init_db(path)
-        conn = get_connection(path)
-        own = True
-    else:
-        init_db()
-        conn = get_connection()
-        own = False
-
+    init_db(db_path)
     with _lock:
-        existing = conn.execute(
-            "SELECT 1 FROM containment_blocks WHERE entity_type=? AND entity_value=?",
-            (entity_type, entity_value),
-        ).fetchone()
-        if existing:
-            changed = False
-        else:
-            conn.execute(
-                """
-                INSERT INTO containment_blocks
-                    (entity_type, entity_value, created_at, mode, note)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (entity_type, entity_value, _utc_now_iso(), mode, note),
+        with session_scope(db_path) as session:
+            existing = session.get(ContainmentBlock, (entity_type, entity_value))
+            if existing:
+                return False
+            session.add(
+                ContainmentBlock(
+                    entity_type=entity_type,
+                    entity_value=entity_value,
+                    created_at=_utc_now_iso(),
+                    mode=mode,
+                    note=note,
+                )
             )
-            conn.commit()
-            changed = True
-    if own:
-        conn.close()
-    return changed
+    return True
 
 
 def remove_block(
@@ -442,26 +530,14 @@ def remove_block(
     if entity_type not in ("ip", "user") or not entity_value:
         return False
 
-    path = Path(db_path) if db_path is not None else None
-    if path is not None:
-        init_db(path)
-        conn = get_connection(path)
-        own = True
-    else:
-        init_db()
-        conn = get_connection()
-        own = False
-
+    init_db(db_path)
     with _lock:
-        cur = conn.execute(
-            "DELETE FROM containment_blocks WHERE entity_type=? AND entity_value=?",
-            (entity_type, entity_value),
-        )
-        conn.commit()
-        changed = cur.rowcount > 0
-    if own:
-        conn.close()
-    return changed
+        with session_scope(db_path) as session:
+            existing = session.get(ContainmentBlock, (entity_type, entity_value))
+            if not existing:
+                return False
+            session.delete(existing)
+    return True
 
 
 def append_audit(
@@ -474,15 +550,7 @@ def append_audit(
     db_path: Optional[Path | str] = None,
 ) -> int:
     """Append a containment audit row. Returns new id."""
-    path = Path(db_path) if db_path is not None else None
-    if path is not None:
-        init_db(path)
-        conn = get_connection(path)
-        own = True
-    else:
-        init_db()
-        conn = get_connection()
-        own = False
+    init_db(db_path)
 
     if detail is not None and not isinstance(detail, str):
         try:
@@ -490,25 +558,19 @@ def append_audit(
         except Exception:
             detail = str(detail)
 
+    row = ContainmentAudit(
+        ts=_utc_now_iso(),
+        action=action,
+        entity_type=entity_type,
+        entity_value=entity_value,
+        mode=mode,
+        detail=detail,
+    )
     with _lock:
-        cur = conn.execute(
-            """
-            INSERT INTO containment_audit (ts, action, entity_type, entity_value, mode, detail)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                _utc_now_iso(),
-                action,
-                entity_type,
-                entity_value,
-                mode,
-                detail,
-            ),
-        )
-        conn.commit()
-        row_id = int(cur.lastrowid)
-    if own:
-        conn.close()
+        with session_scope(db_path) as session:
+            session.add(row)
+            session.flush()
+            row_id = int(row.id)
     return row_id
 
 
@@ -517,36 +579,24 @@ def list_audit(
     limit: int = 100,
     db_path: Optional[Path | str] = None,
 ) -> List[Dict[str, Any]]:
-    path = Path(db_path) if db_path is not None else None
-    if path is not None:
-        init_db(path)
-        conn = get_connection(path)
-        own = True
-    else:
-        init_db()
-        conn = get_connection()
-        own = False
+    init_db(db_path)
     with _lock:
-        rows = conn.execute(
-            """
-            SELECT id, ts, action, entity_type, entity_value, mode, detail
-            FROM containment_audit
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (int(limit),),
-        ).fetchall()
-    if own:
-        conn.close()
-    return [_row_to_dict(r) for r in rows]
+        with session_scope(db_path) as session:
+            rows = session.scalars(
+                select(ContainmentAudit)
+                .order_by(ContainmentAudit.id.desc())
+                .limit(int(limit))
+            ).all()
+            return [_audit_to_dict(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------
 # Migration from legacy CSV / JSON / JSONL
 # ---------------------------------------------------------------------------
 
-def _table_empty(conn: sqlite3.Connection, table: str) -> bool:
-    return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]) == 0
+def _table_empty(session: Session, model) -> bool:
+    n = session.scalar(select(func.count()).select_from(model))
+    return int(n or 0) == 0
 
 
 def migrate_from_legacy_files(
@@ -560,20 +610,21 @@ def migrate_from_legacy_files(
     One-time import when DB tables are empty and legacy files exist.
     Returns counts: triage, blocks, audit.
     """
-    path = Path(db_path) if db_path is not None else get_db_path()
-    init_db(path)
-    # Use a dedicated connection for migration so counts are consistent in tests
-    conn = get_connection(path)
+    init_db(db_path)
     triage_csv = Path(triage_csv) if triage_csv else LEGACY_TRIAGE_CSV
     blocked_json = Path(blocked_json) if blocked_json else LEGACY_BLOCKED_JSON
     audit_jsonl = Path(audit_jsonl) if audit_jsonl else LEGACY_AUDIT_JSONL
 
     counts = {"triage": 0, "blocks": 0, "audit": 0}
+    url = get_database_url(db_path)
+    label = str(Path(db_path) if db_path is not None else (
+        get_db_path() if not is_postgres_url(url) else url
+    ))
 
-    try:
-        with _lock:
+    with _lock:
+        with session_scope(db_path) as session:
             # --- triage CSV ---
-            if _table_empty(conn, "triage_events") and triage_csv.exists():
+            if _table_empty(session, TriageEvent) and triage_csv.exists():
                 with triage_csv.open(newline="", encoding="utf-8") as f:
                     reader = csv.DictReader(f)
                     for row in reader:
@@ -586,34 +637,27 @@ def migrate_from_legacy_files(
                             )
                         except (TypeError, ValueError):
                             ml_conf_v = None
-                        conn.execute(
-                            """
-                            INSERT INTO triage_events (
-                                timestamp, log, severity, ml_prediction, ml_confidence,
-                                rule_based, "user", ip, containment_decision,
-                                containment_note, source, raw_json
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                row.get("timestamp") or row.get("date"),
-                                row.get("log"),
-                                row.get("severity"),
-                                row.get("ml_prediction"),
-                                ml_conf_v,
-                                row.get("rule_based") or row.get("recommendation"),
-                                row.get("user"),
-                                row.get("ip"),
-                                row.get("containment_decision"),
-                                row.get("containment_note"),
-                                "legacy_csv",
-                                json.dumps(row, default=str),
-                            ),
+                        session.add(
+                            TriageEvent(
+                                timestamp=row.get("timestamp") or row.get("date"),
+                                log=row.get("log"),
+                                severity=row.get("severity"),
+                                ml_prediction=row.get("ml_prediction"),
+                                ml_confidence=ml_conf_v,
+                                rule_based=row.get("rule_based")
+                                or row.get("recommendation"),
+                                user=row.get("user"),
+                                ip=row.get("ip"),
+                                containment_decision=row.get("containment_decision"),
+                                containment_note=row.get("containment_note"),
+                                source="legacy_csv",
+                                raw_json=json.dumps(row, default=str),
+                            )
                         )
                         counts["triage"] += 1
-                conn.commit()
 
             # --- blocked JSON ---
-            if _table_empty(conn, "containment_blocks") and blocked_json.exists():
+            if _table_empty(session, ContainmentBlock) and blocked_json.exists():
                 try:
                     data = json.loads(blocked_json.read_text(encoding="utf-8"))
                 except Exception:
@@ -623,32 +667,37 @@ def migrate_from_legacy_files(
                     ip = str(ip).strip()
                     if not ip:
                         continue
-                    conn.execute(
-                        """
-                        INSERT OR IGNORE INTO containment_blocks
-                            (entity_type, entity_value, created_at, mode, note)
-                        VALUES ('ip', ?, ?, 'migrated', 'imported from blocked_entities.json')
-                        """,
-                        (ip, now),
+                    if session.get(ContainmentBlock, ("ip", ip)):
+                        continue
+                    session.add(
+                        ContainmentBlock(
+                            entity_type="ip",
+                            entity_value=ip,
+                            created_at=now,
+                            mode="migrated",
+                            note="imported from blocked_entities.json",
+                        )
                     )
                     counts["blocks"] += 1
                 for user in data.get("users") or []:
                     user = str(user).strip()
                     if not user:
                         continue
-                    conn.execute(
-                        """
-                        INSERT OR IGNORE INTO containment_blocks
-                            (entity_type, entity_value, created_at, mode, note)
-                        VALUES ('user', ?, ?, 'migrated', 'imported from blocked_entities.json')
-                        """,
-                        (user, now),
+                    if session.get(ContainmentBlock, ("user", user)):
+                        continue
+                    session.add(
+                        ContainmentBlock(
+                            entity_type="user",
+                            entity_value=user,
+                            created_at=now,
+                            mode="migrated",
+                            note="imported from blocked_entities.json",
+                        )
                     )
                     counts["blocks"] += 1
-                conn.commit()
 
             # --- audit JSONL ---
-            if _table_empty(conn, "containment_audit") and audit_jsonl.exists():
+            if _table_empty(session, ContainmentAudit) and audit_jsonl.exists():
                 with audit_jsonl.open(encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
@@ -661,46 +710,40 @@ def migrate_from_legacy_files(
                         detail = row.get("extra") or row.get("result")
                         if detail is not None and not isinstance(detail, str):
                             detail = json.dumps(detail, default=str)
-                        # Prefer result in detail when extra missing
                         if row.get("result") and row.get("extra") is None:
                             detail = json.dumps(
                                 {"result": row.get("result")}, default=str
                             )
-                        conn.execute(
-                            """
-                            INSERT INTO containment_audit
-                                (ts, action, entity_type, entity_value, mode, detail)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                row.get("timestamp") or row.get("ts") or _utc_now_iso(),
-                                row.get("event") or row.get("action") or "unknown",
-                                row.get("target_type") or row.get("entity_type"),
-                                row.get("target") or row.get("entity_value"),
-                                row.get("mode"),
-                                detail,
-                            ),
+                        session.add(
+                            ContainmentAudit(
+                                ts=row.get("timestamp")
+                                or row.get("ts")
+                                or _utc_now_iso(),
+                                action=row.get("event")
+                                or row.get("action")
+                                or "unknown",
+                                entity_type=row.get("target_type")
+                                or row.get("entity_type"),
+                                entity_value=row.get("target")
+                                or row.get("entity_value"),
+                                mode=row.get("mode"),
+                                detail=detail,
+                            )
                         )
                         counts["audit"] += 1
-                conn.commit()
-    finally:
-        conn.close()
-        # If we migrated into the default path, reset global conn so it sees data
-        if db_path is None or Path(db_path) == get_db_path():
-            reset_connection()
 
     if any(counts.values()):
         logger.info(
-            "Migrated legacy data into SQLite: triage=%s blocks=%s audit=%s → %s",
+            "Migrated legacy data into DB: triage=%s blocks=%s audit=%s → %s",
             counts["triage"],
             counts["blocks"],
             counts["audit"],
-            path,
+            label,
         )
         print(
-            f"[storage] Migrated legacy files → SQLite "
+            f"[storage] Migrated legacy files → DB "
             f"(triage={counts['triage']}, blocks={counts['blocks']}, "
-            f"audit={counts['audit']}) at {path}"
+            f"audit={counts['audit']}) at {label}"
         )
     return counts
 

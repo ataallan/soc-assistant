@@ -1,17 +1,21 @@
-"""Unit tests for SQLite storage helpers and legacy migration."""
+"""Unit tests for storage helpers, legacy migration, and backend URL selection."""
 
 from __future__ import annotations
 
 import csv
 import json
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import db
+from sqlalchemy.engine import make_url
 
 
 def _temp_db(tmp_path, monkeypatch):
     db_path = tmp_path / "test_soc.db"
     monkeypatch.setenv("SOC_DB_PATH", str(db_path))
+    monkeypatch.delenv("SOC_DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     db.reset_connection()
     db.init_db(db_path)
     return db_path
@@ -103,6 +107,8 @@ def test_blocks_and_audit(tmp_path, monkeypatch):
 def test_migrate_from_legacy_files(tmp_path, monkeypatch):
     db_path = tmp_path / "migrated.db"
     monkeypatch.setenv("SOC_DB_PATH", str(db_path))
+    monkeypatch.delenv("SOC_DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     db.reset_connection()
 
     csv_path = tmp_path / "triage_report.csv"
@@ -206,3 +212,55 @@ def test_export_triage_to_csv(tmp_path, monkeypatch):
     content = out.read_text(encoding="utf-8")
     assert "export me" in content
     assert "erin" in content
+
+
+def test_database_url_selects_postgres_dialect(monkeypatch):
+    """URL env selects postgresql dialect without needing a live server."""
+    monkeypatch.delenv("SOC_DB_PATH", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv(
+        "SOC_DATABASE_URL",
+        "postgresql+psycopg://user:pass@localhost:5432/soc_assistant",
+    )
+    db.reset_connection()
+    url = db.get_database_url()
+    assert make_url(url).get_backend_name() == "postgresql"
+    assert db.is_postgres_url(url) is True
+
+
+def test_postgres_url_normalized_from_DATABASE_URL(monkeypatch):
+    monkeypatch.delenv("SOC_DATABASE_URL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@127.0.0.1:5432/soc_assistant")
+    db.reset_connection()
+    url = db.get_database_url()
+    assert url.startswith("postgresql+psycopg://")
+    assert make_url(url).get_backend_name() == "postgresql"
+
+
+def test_explicit_db_path_prefers_sqlite_over_url(tmp_path, monkeypatch):
+    monkeypatch.setenv(
+        "SOC_DATABASE_URL",
+        "postgresql+psycopg://user:pass@localhost:5432/soc_assistant",
+    )
+    path = tmp_path / "forced.db"
+    url = db.get_database_url(path)
+    assert make_url(url).get_backend_name() == "sqlite"
+
+
+def test_get_engine_postgres_uses_pool_settings(monkeypatch):
+    """Mock engine creation — no live Postgres required."""
+    monkeypatch.setenv(
+        "SOC_DATABASE_URL",
+        "postgresql+psycopg://user:pass@localhost:5432/soc_assistant",
+    )
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    db.reset_connection()
+
+    mock_engine = MagicMock()
+    with patch("db.create_engine", return_value=mock_engine) as mock_create:
+        eng = db.get_engine()
+        assert eng is mock_engine
+        args, kwargs = mock_create.call_args
+        assert make_url(args[0]).get_backend_name() == "postgresql"
+        assert kwargs.get("pool_pre_ping") is True
+        assert kwargs.get("pool_size") == 5

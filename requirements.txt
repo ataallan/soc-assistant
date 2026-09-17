@@ -9,3 +9,5 @@ werkzeug
 python-dotenv
 urllib3
 pytest
+sqlalchemy>=2.0
+psycopg[binary]>=3.1

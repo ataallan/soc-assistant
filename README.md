@@ -11,7 +11,7 @@ An **AI-assisted SOC triage** toolkit that combines rule-based analysis with a s
 - Muteable severe-alert beep + flash on the floating Alerts control
 - Email notifications for high/critical events (Gmail SMTP / App Password)
 - Optional Wazuh 4.x API alert fetch
-- SQLite persistence for triage events, containment blocks, and audit (CSV export available)
+- Flexible DB persistence (SQLite by default; optional PostgreSQL) for triage, blocks, and audit (CSV export available)
 - Analyst labeling template — see [docs/LABELING.md](docs/LABELING.md)
 
 
@@ -32,7 +32,7 @@ Suggested captures live in [docs/screenshots/](docs/screenshots/). Starter asset
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system diagram and component table.
 
-Flow (short): **CSV / Wazuh** → **rules + ML triage** → **SQLite (triage + blocks + audit) / email / Flask UI**. CSV is for ingest and export only.
+Flow (short): **CSV / Wazuh** → **rules + ML triage** → **DB (triage + blocks + audit) / email / Flask UI**. CSV is for ingest and export only.
 
 ## Setup
 
@@ -50,9 +50,9 @@ copy .env.example .env   # Windows
 # cp .env.example .env   # macOS / Linux
 ```
 
-Edit `.env` and set `SECRET_KEY`, mail credentials, `SOC_DB_PATH` (optional; default `data/soc_assistant.db`), and (optionally) Wazuh values. **Never commit `.env` or `*.db`.**
+Edit `.env` and set `SECRET_KEY`, mail credentials, `SOC_DB_PATH` (optional; default `data/soc_assistant.db`), and (optionally) `SOC_DATABASE_URL` / `DATABASE_URL` for PostgreSQL, plus Wazuh values. **Never commit `.env` or `*.db`.**
 
-Runtime triage and containment state lives in **SQLite**. See [docs/STORAGE.md](docs/STORAGE.md).
+Runtime triage and containment state lives in **SQLite by default** (optional PostgreSQL). See [docs/STORAGE.md](docs/STORAGE.md).
 
 
 
@@ -154,8 +154,8 @@ Automatic IP/user blocks from triage **require rule + ML agreement** (or rules m
 | `data/labeling_template.csv` | Analyst labeling CSV template |
 | `docs/LABELING.md` | How to label, merge, retrain, evaluate |
 | `report_filters.py` | Dashboard report view filters + alert counts |
-| `db.py` | SQLite source of truth (triage, blocks, audit) |
-| `docs/STORAGE.md` | DB path, migration, export, Postgres notes |
+| `db.py` | SQLAlchemy storage layer (SQLite default, optional Postgres) |
+| `docs/STORAGE.md` | DB path, Postgres Docker one-liner, migration, export |
 | `data/soc_assistant.db` | Runtime SQLite DB (gitignored; created on startup) |
 
 ## Known limitations
@@ -163,7 +163,7 @@ Automatic IP/user blocks from triage **require rule + ML agreement** (or rules m
 - **Wiring fragility:** The dashboard imports CLI helpers (`train_ml_model`, `watch_csv`, `watch_wazuh`, block helpers, `blocked_entities`, `REPORT_FILE_CSV`). If those names drift again, the UI prints `SOC import error` and related actions stop working.
 - **`apply_triage.py` directory:** On the Capstone Desktop copy, `apply_triage.py` is a **folder**, not a script. Use `soc_triage_cli.py` as the CLI entrypoint.
 - **Demo bind / debug:** `dashboard.py` uses `debug=True` and `host="0.0.0.0"` for local demos only — do not expose that on an untrusted network.
-- **Blocking is simulated:** Block/unblock updates local SQLite state; it does not change firewall rules.
+- **Blocking is simulated:** Block/unblock updates local DB state; it does not change firewall rules.
 - **Academic / demo scope:** Treat this as a learning project, not production SOC automation.
 
 

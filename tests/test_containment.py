@@ -12,6 +12,8 @@ def _prep(tmp_path, monkeypatch, mode="simulated"):
     (tmp_path / "data").mkdir()
     db_path = tmp_path / "data" / "soc_assistant.db"
     monkeypatch.setenv("SOC_DB_PATH", str(db_path))
+    monkeypatch.delenv("SOC_DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     db.reset_connection()
     db.init_db(db_path)
     containment._db_ready = True  # skip ensure_db_ready side effects in unit tests
