@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}CSV Logs{% endblock %}
+
+{% block content %}
+<!-- Back Button -->
+<span onclick="window.history.back()" 
+      style="cursor:pointer; font-size:22px; color:#0d6efd;">
+    ⬅ Back
+</span>
+
+<div class="container mt-4">
+    <h2>CSV Log Entries</h2>
+
+    {% if rows %}
+    <!-- Scrollable container -->
+    <div style="max-height: 500px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px;">
+        <table class="table table-striped mb-0">
+            <thead class="table-light" style="position: sticky; top: 0; z-index: 2;">
+                <tr>
+                    {% for key in rows[0].keys() %}
+                    <th>{{ key }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr>
+                    {% for val in row.values() %}
+                    <td>{{ val }}</td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="alert alert-secondary mt-3">No CSV logs found.</div>
+    {% endif %}
+</div>
+{% endblock %}

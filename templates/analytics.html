@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}Analytics{% endblock %}
+
+{% block content %}
+
+<!-- Back Arrow -->
+<span onclick="window.history.back()" 
+      style="cursor:pointer; font-size:22px; color:#0d6efd;">
+    ⬅ Back
+</span>
+
+<div class="container mt-4">
+
+    <h2 class="fw-bold mb-4">SOC Analytics Dashboard</h2>
+
+    {% if not rows %}
+        <div class="alert alert-secondary">
+            No analytics available. Train model or ingest logs.
+        </div>
+    {% else %}
+
+    <!-- === CARDS SUMMARY === -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h6 class="text-muted">Total Records</h6>
+                    <h3 class="fw-bold">{{ rows|length }}</h3>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h6 class="text-muted">Unique Severities</h6>
+                    <h3 class="fw-bold" id="severityCountDisplay"></h3>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h6 class="text-muted">ML Prediction Categories</h6>
+                    <h3 class="fw-bold" id="predictionCountDisplay"></h3>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- === CHARTS === -->
+    <div class="row">
+
+        <!-- Severity Bar Chart -->
+        <div class="col-md-6 mb-4">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="fw-bold mb-3">Severity Distribution</h5>
+                    <canvas id="severityChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Prediction Pie Chart (if predictions exist) -->
+        <div class="col-md-6 mb-4">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="fw-bold mb-3">ML Prediction Distribution</h5>
+                    <canvas id="predictionChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Alerts Over Time -->
+        <div class="col-md-12 mb-4">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="fw-bold mb-3">Alerts Over Time</h5>
+                    <canvas id="timeChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% endif %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+{% if rows %}
+    const rows = {{ rows|tojson }};
+
+    // ================================
+    // SEVERITY COUNT
+    // ================================
+    const severityCount = {};
+    rows.forEach(r => {
+        const sev = r.severity ? r.severity.toLowerCase() : "unknown";
+        severityCount[sev] = (severityCount[sev] || 0) + 1;
+    });
+
+    document.getElementById("severityCountDisplay").innerText =
+        Object.keys(severityCount).length;
+
+    new Chart(document.getElementById("severityChart"), {
+        type: "bar",
+        data: {
+            labels: Object.keys(severityCount),
+            datasets: [{
+                label: "Alerts",
+                data: Object.values(severityCount),
+                borderWidth: 1
+            }]
+        },
+        options: { responsive: true }
+    });
+
+    // ================================
+    // PREDICTION PIE CHART
+    // ================================
+    const predictionCount = {};
+    rows.forEach(r => {
+        if (r.ml_prediction) {
+            predictionCount[r.ml_prediction] = (predictionCount[r.ml_prediction] || 0) + 1;
+        }
+    });
+
+    document.getElementById("predictionCountDisplay").innerText =
+        Object.keys(predictionCount).length;
+
+    new Chart(document.getElementById("predictionChart"), {
+        type: "pie",
+        data: {
+            labels: Object.keys(predictionCount),
+            datasets: [{
+                data: Object.values(predictionCount),
+                borderWidth: 1
+            }]
+        }
+    });
+
+    // ================================
+    // ALERTS OVER TIME (Line Chart)
+    // ================================
+    const timeSeries = {};
+
+    rows.forEach(r => {
+        if (r.timestamp) {
+            const day = r.timestamp.split("T")[0];
+            timeSeries[day] = (timeSeries[day] || 0) + 1;
+        }
+    });
+
+    new Chart(document.getElementById("timeChart"), {
+        type: "line",
+        data: {
+            labels: Object.keys(timeSeries),
+            datasets: [{
+                label: "Alerts",
+                data: Object.values(timeSeries),
+                tension: 0.2,
+                fill: false,
+                borderWidth: 2
+            }]
+        },
+        options: { responsive: true }
+    });
+
+{% endif %}
+</script>
+
+{% endblock %}

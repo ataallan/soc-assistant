@@ -52,7 +52,7 @@ python dashboard.py
 
 Open [http://127.0.0.1:5000](http://127.0.0.1:5000). Register with an email address (used for OTP), then log in.
 
-Flask templates are expected under `templates/` (login, register, 2FA, index, reports, etc.). If that folder is missing from your checkout, restore it from your local Capstone copy before using the UI.
+Flask templates live under `templates/` (login, register, 2FA, home, reports, etc.).
 
 ## Wazuh (optional)
 

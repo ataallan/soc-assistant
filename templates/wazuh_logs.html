@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Wazuh Alerts{% endblock %}
+
+{% block content %}
+
+<!-- Back Button -->
+<span onclick="window.history.back()" 
+      style="cursor:pointer; font-size:22px; color:#0d6efd;">
+    ⬅ Back
+</span>
+
+<div class="container mt-4">
+
+    <h2 class="mb-3">Recent Wazuh Alerts</h2>
+
+    <!-- Search -->
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <input id="searchInput" 
+                   type="text" 
+                   class="form-control" 
+                   placeholder="Search alerts...">
+        </div>
+    </div>
+
+    {% if logs %}
+    <!-- Scrollable Alerts Box -->
+    <div id="alertsBox" style="
+        max-height: 500px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+    ">
+        <ul id="alertsList" class="list-group mb-0">
+            {% for alert in logs %}
+            <li class="list-group-item alert-item"
+                data-text="{{ alert|lower }}">
+                {{ alert }}
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+
+    {% else %}
+    <div class="alert alert-secondary mt-3">No Wazuh alerts available.</div>
+    {% endif %}
+</div>
+
+
+<!-- SEARCH SCRIPT -->
+<script>
+document.getElementById("searchInput").addEventListener("keyup", function () {
+    const query = this.value.toLowerCase();
+    const items = document.querySelectorAll(".alert-item");
+
+    items.forEach(item => {
+        let textMatch = item.dataset.text.includes(query);
+        item.style.display = textMatch ? "" : "none";
+    });
+});
+</script>
+
+<!-- AUTO-REFRESH SCRIPT -->
+<script>
+setInterval(() => {
+    fetch(window.location.href)
+    .then(response => response.text())
+    .then(html => {
+        const parser = new DOMParser();
+        const newDoc = parser.parseFromString(html, "text/html");
+
+        const newList = newDoc.querySelector("#alertsList").innerHTML;
+        document.querySelector("#alertsList").innerHTML = newList;
+    });
+}, 10000); // refresh every 10 seconds
+</script>
+
+{% endblock %}

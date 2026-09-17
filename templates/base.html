@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{% endblock %} | SOC Dashboard</title>
+
+    <!-- Bootstrap -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <style>
+        body {
+            background-color: #121212;
+            color: #eee;
+        }
+        .navbar {
+            background-color: #1f1f1f !important;
+        }
+        .card {
+            background-color: #1e1e1e;
+            border: 1px solid #333;
+            transition: 0.2s ease-in-out;
+        }
+        .card:hover {
+            transform: scale(1.02);
+            border-color: #555;
+        }
+        .nav-link.active {
+            font-weight: bold;
+            color: #0d6efd !important;
+        }
+
+        /* ------------------ ADVANCED NOTIFICATION PANEL ------------------ */
+
+        .notification-slide {
+            width: 320px;
+            height: 100vh;
+            background: #1e1e1e;
+            position: fixed;
+            top: 0;
+            right: -350px;
+            transition: right 0.4s ease;
+            z-index: 99999;
+            padding: 15px;
+            color: white;
+            border-left: 2px solid #333;
+            overflow-y: auto;
+        }
+        .notification-slide.visible {
+            right: 0;
+        }
+
+        #notifHeader {
+            display: flex;
+            justify-content: space-between;
+            font-size: 18px;
+            border-bottom: 1px solid #444;
+            padding-bottom: 10px;
+        }
+        #notifCloseBtn {
+            cursor: pointer;
+            font-size: 28px;
+            color: #aaa;
+        }
+        #notifCloseBtn:hover {
+            color: white;
+        }
+
+        .notif-button {
+            position: fixed;
+            bottom: 25px;
+            right: 25px;
+            background: #0d6efd;
+            color: white;
+            border-radius: 40px;
+            padding: 12px 20px;
+            border: none;
+            font-size: 18px;
+            cursor: pointer;
+            z-index: 9999;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+        }
+
+        #notifList {
+            list-style: none;
+            padding-left: 0;
+        }
+        #notifList li {
+            padding: 8px 10px;
+            background: #2b2b2b;
+            margin-bottom: 6px;
+            border-radius: 6px;
+            font-size: 14px;
+            border-left: 4px solid #0d6efd;
+        }
+        .critical-li {
+            border-left: 4px solid #dc3545 !important;
+        }
+
+        .blink-alert {
+            animation: blink 0.9s infinite;
+        }
+        @keyframes blink {
+            0% { background-color: #dc3545; }
+            50% { background-color: #8b0000; }
+            100% { background-color: #dc3545; }
+        }
+    </style>
+</head>
+
+<body>
+
+<!-- 🔔 ADVANCED NOTIFICATION PANEL -->
+<div id="advNotificationPanel" class="notification-slide shadow-lg">
+    <div id="notifHeader">
+        <strong>🔔 SOC Live Alerts</strong>
+        <span id="notifCloseBtn">&times;</span>
+    </div>
+
+    <div id="notifSummary">
+        <p><span id="notifCriticalCount">0</span> Critical Alerts</p>
+        <p><span id="notifHighCount">0</span> Escalations</p>
+        <p><span id="notifBlockedCount">0</span> Blocked Entities</p>
+    </div>
+
+    <div id="notifDetails">
+        <h6 class="mt-2">Recent Alerts</h6>
+        <ul id="notifList"></ul>
+    </div>
+</div>
+
+<!-- Floating toggle button -->
+<button id="openNotifBtn" class="notif-button">🔔 Alerts</button>
+
+<!-- SOUND -->
+<audio id="alertSound">
+    <source src="/static/sounds/alert.mp3" type="audio/mpeg">
+</audio>
+
+<!-- NAVBAR -->
+<nav class="navbar navbar-expand-lg navbar-dark border-bottom border-secondary">
+    <div class="container-fluid">
+        <a class="navbar-brand fw-bold" href="/">SOC Dashboard</a>
+
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
+                data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false"
+                aria-label="Toggle navigation">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+
+        <div class="collapse navbar-collapse" id="navbarNav">
+
+            <ul class="navbar-nav me-auto">
+                <li class="nav-item">
+                    <a class="nav-link" href="/">Home</a>
+                </li>
+
+                <li class="nav-item">
+                    <a class="nav-link" href="/logs/wazuh">Wazuh Alerts</a>
+                </li>
+
+                <li class="nav-item">
+                    <a class="nav-link" href="/logs/csv">CSV Logs</a>
+                </li>
+
+                <li class="nav-item">
+                    <a class="nav-link" href="/blocks">Blocked Entities</a>
+                </li>
+
+                <li class="nav-item">
+                    <a class="nav-link" href="/analytics">Analytics</a>
+                </li>
+
+                <li class="nav-item">
+                    <a class="nav-link" href="/report">Triage Report</a>
+                </li>
+            </ul>
+
+            <ul class="navbar-nav">
+                <li class="nav-item">
+                    <a class="nav-link text-danger" href="/logout">Logout</a>
+                </li>
+            </ul>
+
+        </div>
+    </div>
+</nav>
+
+<!-- MAIN CONTENT -->
+<div class="container py-4">
+    {% block content %}
+    {% endblock %}
+</div>
+
+<!-- TOAST AREA -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index: 9999">
+    <div id="mainToast" class="toast text-bg-success border-0" role="alert">
+        <div class="d-flex">
+            <div class="toast-body" id="toastMessage">Operation successful.</div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto"
+                    data-bs-dismiss="toast"></button>
+        </div>
+    </div>
+</div>
+
+<!-- Bootstrap JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+<script>
+    // Highlight active nav item
+    const currentPath = window.location.pathname;
+    document.querySelectorAll(".nav-link").forEach(link => {
+        if (link.getAttribute("href") === currentPath) {
+            link.classList.add("active");
+        }
+    });
+
+    // Toast function
+    function showToast(message, type="success") {
+        const toast = document.getElementById("mainToast");
+        const msg = document.getElementById("toastMessage");
+
+        toast.classList.remove("text-bg-success", "text-bg-danger", "text-bg-warning");
+
+        if (type === "error") toast.classList.add("text-bg-danger");
+        else if (type === "warn") toast.classList.add("text-bg-warning");
+        else toast.classList.add("text-bg-success");
+
+        msg.innerText = message;
+
+        const bsToast = new bootstrap.Toast(toast);
+        bsToast.show();
+    }
+
+    /* -------------------- ADVANCED NOTIFICATION ENGINE -------------------- */
+
+    let lastCriticalCount = 0;
+    let recentAlerts = [];
+
+    function refreshNotifications() {
+        fetch("/notifications")
+            .then(r => r.json())
+            .then(data => {
+
+                // Update summary counts
+                document.getElementById("notifCriticalCount").innerText = data.severe_alerts;
+                document.getElementById("notifHighCount").innerText = data.escalated_events;
+                document.getElementById("notifBlockedCount").innerText = data.blocked_count;
+
+                // Sound + blinking for NEW critical alerts
+                if (data.severe_alerts > lastCriticalCount) {
+                    document.getElementById("alertSound").play();
+                    document.getElementById("openNotifBtn").classList.add("blink-alert");
+
+                    setTimeout(() => {
+                        document.getElementById("openNotifBtn").classList.remove("blink-alert");
+                    }, 12000);
+                }
+
+                lastCriticalCount = data.severe_alerts;
+
+                // Add new event to list if present
+                if (data.latest_event) {
+                    recentAlerts.unshift(data.latest_event);
+                    if (recentAlerts.length > 10) recentAlerts.pop();
+                }
+
+                // Render list UI
+                let html = "";
+                recentAlerts.forEach(e => {
+                    let cls = e.severity === "critical" ? "critical-li" : "";
+                    html += `<li class="${cls}">
+                                <strong>[${e.severity.toUpperCase()}]</strong> ${e.description}
+                             </li>`;
+                });
+                document.getElementById("notifList").innerHTML = html;
+            });
+    }
+
+    // Poll every 3 seconds
+    setInterval(refreshNotifications, 3000);
+    refreshNotifications();
+
+    // Slide panel controls
+    document.getElementById("openNotifBtn").onclick = () => {
+        document.getElementById("advNotificationPanel").classList.add("visible");
+    };
+    document.getElementById("notifCloseBtn").onclick = () => {
+        document.getElementById("advNotificationPanel").classList.remove("visible");
+    };
+</script>
+
+</body>
+</html>

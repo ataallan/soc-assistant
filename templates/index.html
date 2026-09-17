@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+
+<style>
+    /* Sidebar container */
+    .sidebar {
+        width: 220px;
+        height: 100vh;
+        background: #0d1117;
+        color: white;
+        padding: 20px;
+        border-right: 1px solid rgba(255,255,255,0.1);
+        position: fixed;
+        top: 0;
+        left: 0;
+        transition: width 0.3s ease;
+        overflow: hidden;
+        z-index: 999;
+    }
+
+    .sidebar.collapsed { width: 60px; }
+    .sidebar h3 { color: #1fb6ff; font-size: 20px; margin-bottom: 20px; font-weight: 600; white-space: nowrap; }
+    .sidebar a { display: block; color: #c9d1d9; text-decoration: none; padding: 10px 0; font-size: 15px; transition: 0.2s; white-space: nowrap; }
+    .sidebar a:hover { color: #1fb6ff; padding-left: 5px; }
+    .collapse-btn { color: #1fb6ff; font-size: 20px; cursor: pointer; margin-bottom: 20px; }
+
+    .main-content { margin-left: 240px; transition: margin-left 0.3s ease; padding: 25px; }
+    .main-content.expanded { margin-left: 80px; }
+
+    .dash-card { background: #ffffff; border-radius: 12px; padding: 20px 25px; border-left: 5px solid #0d6efd; transition: 0.2s ease; box-shadow: 0 4px 10px rgba(0,0,0,0.08); }
+    .dash-card:hover { transform: translateY(-4px); box-shadow: 0 8px 18px rgba(0,0,0,0.15); border-left-color: #1aa3ff; }
+
+    .section-title { font-size: 26px; font-weight: 700; }
+    .subtitle { color: #6c757d; margin-top: -5px; }
+
+    .sidebar form button { font-size: 13px; font-weight: 600; }
+    .status-indicator { font-size: 12px; margin-left: 5px; font-weight: 600; }
+    .status-running { color: #28a745; }
+    .status-idle { color: #6c757d; }
+    .status-stopped { color: #dc3545; }
+
+    /* Top bar alert badges */
+    .alert-badge {
+        font-weight: 600;
+        margin-left: 10px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 13px;
+    }
+    .badge-total { background-color: #6c757d; color: white; }
+    .badge-severe { background-color: #dc3545; color: white; }
+    .badge-escalated { background-color: #ffc107; color: black; }
+</style>
+
+<script>
+    function toggleSidebar() {
+        const sidebar = document.getElementById("sidebar");
+        const content = document.getElementById("main-content");
+        sidebar.classList.toggle("collapsed");
+        content.classList.toggle("expanded");
+    }
+
+    async function handleForm(event, endpoint, statusElemId) {
+        event.preventDefault();
+        const res = await fetch(endpoint, { method: "POST" });
+        const data = await res.json();
+        alert(data.status);
+        updateStatus(); // update statuses after action
+    }
+
+    async function updateStatus() {
+        try {
+            const res = await fetch("/notifications");
+            const data = await res.json();
+
+            // Wazuh watcher
+            const wazuhElem = document.getElementById("status-wazuh");
+            wazuhElem.textContent = (data.wazuh_running ? "Running" : "Stopped");
+            wazuhElem.className = "status-indicator " + (data.wazuh_running ? "status-running" : "status-stopped");
+
+            // CSV watcher
+            const csvElem = document.getElementById("status-csv");
+            csvElem.textContent = (data.csv_running ? "Running" : "Stopped");
+            csvElem.className = "status-indicator " + (data.csv_running ? "status-running" : "status-stopped");
+
+            // ML training
+            const mlElem = document.getElementById("status-ml");
+            mlElem.textContent = (data.ml_training ? "Running" : "Idle");
+            mlElem.className = "status-indicator " + (data.ml_training ? "status-running" : "status-idle");
+
+            // Top bar alerts
+            document.getElementById("alert-count-total").textContent = data.blocked_count + data.severe_alerts + data.escalated_events;
+            document.getElementById("alert-count-severe").textContent = data.severe_alerts;
+            document.getElementById("alert-count-escalated").textContent = data.escalated_events;
+
+        } catch(err) {
+            console.error("Failed to update status:", err);
+        }
+    }
+
+    setInterval(updateStatus, 5000);
+    window.onload = updateStatus;
+</script>
+
+<div class="sidebar" id="sidebar">
+    <div class="collapse-btn" onclick="toggleSidebar()">☰</div>
+
+    <h3>Navigation</h3>
+    <a href="/">Dashboard</a>
+    <a href="/logs/wazuh">Wazuh Alerts</a>
+    <a href="/logs/csv">CSV Logs</a>
+    <a href="/blocks">Blocked Entities</a>
+    <a href="/analytics">Analytics</a>
+    <a href="/report">Triage Report</a>
+
+    <!-- Watcher / Train Buttons -->
+    <form onsubmit="handleForm(event, '/watch-wazuh/start', 'status-wazuh')" style="margin-top: 20px;">
+        <button type="submit" class="btn btn-sm btn-primary w-100">
+            Start Wazuh Watcher
+            <span id="status-wazuh" class="status-indicator status-idle">Idle</span>
+        </button>
+    </form>
+
+    <form onsubmit="handleForm(event, '/watch-csv/start', 'status-csv')" style="margin-top: 10px;">
+        <button type="submit" class="btn btn-sm btn-warning w-100">
+            Start CSV Watcher
+            <span id="status-csv" class="status-indicator status-idle">Idle</span>
+        </button>
+    </form>
+
+    <form onsubmit="handleForm(event, '/train-model', 'status-ml')" style="margin-top: 10px;">
+        <button type="submit" class="btn btn-sm btn-success w-100">
+            Train ML Model
+            <span id="status-ml" class="status-indicator status-idle">Idle</span>
+        </button>
+    </form>
+</div>
+
+<div class="main-content" id="main-content">
+
+    <div class="d-flex align-items-center justify-content-between mb-2">
+        <h2 class="section-title">AI-Powered SOC Assistant</h2>
+        <div>
+            <span class="alert-badge badge-total">Total: <span id="alert-count-total">0</span></span>
+            <span class="alert-badge badge-severe">Severe: <span id="alert-count-severe">0</span></span>
+            <span class="alert-badge badge-escalated">Escalated: <span id="alert-count-escalated">0</span></span>
+        </div>
+    </div>
+    <p class="subtitle">Welcome, {{ user }} — Security Operations Dashboard</p>
+
+    <div class="row mt-4">
+        <div class="col-md-4 mb-4">
+            <a href="/logs/wazuh" class="text-decoration-none text-dark">
+                <div class="dash-card">
+                    <h4>Wazuh Alerts</h4>
+                    <p>View real-time security alerts.</p>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-4 mb-4">
+            <a href="/logs/csv" class="text-decoration-none text-dark">
+                <div class="dash-card">
+                    <h4>CSV Logs</h4>
+                    <p>Ingested log events & activity.</p>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-4 mb-4">
+            <a href="/blocks" class="text-decoration-none text-dark">
+                <div class="dash-card">
+                    <h4>Blocked Entities</h4>
+                    <p>View and manage blocked IPs & users.</p>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-4 mb-4">
+            <a href="/analytics" class="text-decoration-none text-dark">
+                <div class="dash-card">
+                    <h4>Analytics</h4>
+                    <p>Trends, ML predictions & insights.</p>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-4 mb-4">
+            <a href="/report" class="text-decoration-none text-dark">
+                <div class="dash-card">
+                    <h4>Triage Report</h4>
+                    <p>Security analysis log report.</p>
+                </div>
+            </a>
+        </div>
+    </div>
+
+</div>
+
+{% endblock %}
