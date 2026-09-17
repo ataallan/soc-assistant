@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}System Health{% endblock %}
+
+{% block content %}
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+  <div>
+    <h1 class="page-title">System Health</h1>
+    <p class="page-subtitle">Storage, Wazuh connectivity, and live watchers at a glance.</p>
+  </div>
+  <a class="btn btn-outline-secondary btn-sm" href="/health.json" target="_blank" rel="noopener">View JSON</a>
+</div>
+
+{% if flash %}
+<div class="notice-bar mb-3 {% if not flash.ok %}border-danger{% endif %}">
+  {{ flash.message }}
+</div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="soc-panel h-100">
+      <h4 class="mb-3" style="font-size:1.05rem;letter-spacing:-0.02em;">
+        <i class="bi bi-database me-1"></i> Storage
+      </h4>
+      <dl class="row mb-0 small">
+        <dt class="col-5 text-secondary">Backend</dt>
+        <dd class="col-7">
+          {% if health.storage.backend == 'sqlite' %}
+          <span class="status-chip running"><span class="dot"></span> SQLite</span>
+          {% elif health.storage.backend == 'postgres' %}
+          <span class="status-chip running"><span class="dot"></span> PostgreSQL</span>
+          {% else %}
+          <span class="status-chip idle"><span class="dot"></span> {{ health.storage.backend }}</span>
+          {% endif %}
+        </dd>
+        <dt class="col-5 text-secondary">Location</dt>
+        <dd class="col-7"><code class="small">{{ health.storage.location }}</code></dd>
+        <dt class="col-5 text-secondary">Triage events</dt>
+        <dd class="col-7">{{ health.storage.triage_events }}</dd>
+        <dt class="col-5 text-secondary">Active blocks</dt>
+        <dd class="col-7">{{ health.storage.blocks }}</dd>
+      </dl>
+
+      {% if can_backup %}
+      <hr class="border-secondary opacity-25 my-3">
+      <form method="POST" action="/backup" class="d-flex flex-wrap align-items-center gap-2">
+        <button type="submit" class="btn btn-primary btn-sm">
+          <i class="bi bi-hdd me-1"></i> Back up database
+        </button>
+        <span class="text-secondary small">Saves a copy under <code>data/backups/</code> (keeps last 10).</span>
+      </form>
+      {% else %}
+      <hr class="border-secondary opacity-25 my-3">
+      <p class="text-secondary small mb-0">
+        File backup from this console is for SQLite only. With PostgreSQL, use your host’s backup tools (for example <code>pg_dump</code>).
+      </p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="soc-panel h-100">
+      <h4 class="mb-3" style="font-size:1.05rem;letter-spacing:-0.02em;">
+        <i class="bi bi-shield-lock me-1"></i> Wazuh API
+      </h4>
+      <dl class="row mb-0 small">
+        <dt class="col-5 text-secondary">API host</dt>
+        <dd class="col-7"><code>{{ health.wazuh.api_host }}</code></dd>
+        <dt class="col-5 text-secondary">Authentication</dt>
+        <dd class="col-7">
+          {% if health.wazuh.authenticated %}
+          <span class="status-chip running"><span class="dot"></span> Connected</span>
+          {% else %}
+          <span class="status-chip stopped"><span class="dot"></span> Not connected</span>
+          {% endif %}
+        </dd>
+        <dt class="col-5 text-secondary">Note</dt>
+        <dd class="col-7 text-secondary">
+          {% if health.wazuh.authenticated %}
+          Credentials accepted.
+          {% elif health.wazuh.last_error %}
+          {{ health.wazuh.last_error }}
+          {% else %}
+          Unable to authenticate right now.
+          {% endif %}
+        </dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="soc-panel h-100">
+      <h4 class="mb-3" style="font-size:1.05rem;letter-spacing:-0.02em;">
+        <i class="bi bi-broadcast me-1"></i> Watchers
+      </h4>
+      <dl class="row mb-0 small">
+        <dt class="col-5 text-secondary">CSV feed</dt>
+        <dd class="col-7">
+          {% if health.watchers.csv %}
+          <span class="status-chip running"><span class="dot"></span> Running</span>
+          {% else %}
+          <span class="status-chip idle"><span class="dot"></span> Stopped</span>
+          {% endif %}
+        </dd>
+        <dt class="col-5 text-secondary">Wazuh feed</dt>
+        <dd class="col-7">
+          {% if health.watchers.wazuh %}
+          <span class="status-chip running"><span class="dot"></span> Running</span>
+          {% else %}
+          <span class="status-chip idle"><span class="dot"></span> Stopped</span>
+          {% endif %}
+        </dd>
+      </dl>
+      <p class="text-secondary small mt-3 mb-0">
+        Start or stop watchers from the Home console.
+      </p>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

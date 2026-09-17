@@ -789,3 +789,161 @@ def export_triage_to_csv(
         for e in events:
             writer.writerow({k: e.get(k) for k in EXPORT_FIELDS})
     return len(events)
+
+
+# ---------------------------------------------------------------------------
+# SQLite backup + storage status (ops health)
+# ---------------------------------------------------------------------------
+
+BACKUP_KEEP_DEFAULT = 10
+
+
+def get_storage_status(db_path: Optional[Path | str] = None) -> Dict[str, Any]:
+    """
+    Operator-facing storage summary (no credentials).
+
+    Returns backend (sqlite|postgres|…), safe location (path or host/db),
+    triage_events count, and total blocks count.
+    """
+    url = get_database_url(db_path)
+    try:
+        parsed = make_url(url)
+        backend_name = parsed.get_backend_name()
+    except Exception:
+        backend_name = "unknown"
+        parsed = None
+
+    if backend_name == "sqlite":
+        backend = "sqlite"
+        location = str(Path(db_path) if db_path is not None else get_db_path())
+    elif backend_name == "postgresql":
+        backend = "postgres"
+        if parsed is not None:
+            host = parsed.host or "localhost"
+            port = parsed.port
+            database = parsed.database or ""
+            if port:
+                location = f"{host}:{port}/{database}"
+            else:
+                location = f"{host}/{database}"
+        else:
+            location = "(postgres)"
+    else:
+        backend = backend_name or "unknown"
+        location = "(configured)"
+
+    triage_n = triage_event_count(db_path)
+    blocks = load_blocks(db_path)
+    blocks_n = len(blocks.get("ips") or []) + len(blocks.get("users") or [])
+
+    return {
+        "backend": backend,
+        "location": location,
+        "triage_events": triage_n,
+        "blocks": blocks_n,
+    }
+
+
+def backup_sqlite(
+    dest_dir: Path | str = "data/backups",
+    *,
+    keep: int = BACKUP_KEEP_DEFAULT,
+    db_path: Optional[Path | str] = None,
+) -> Dict[str, Any]:
+    """
+    Copy the SQLite database into dest_dir and rotate older backups.
+
+    When the active backend is PostgreSQL, returns ok=False with a clear
+    operator message (no-op). Uses the SQLite online backup API so WAL
+    databases are consistent.
+    """
+    import sqlite3
+
+    url = get_database_url(db_path)
+    if is_postgres_url(url):
+        return {
+            "ok": False,
+            "backend": "postgres",
+            "path": None,
+            "kept": 0,
+            "message": (
+                "SQLite file backup is not available while PostgreSQL is in use. "
+                "Use pg_dump or your host's Postgres backup tools instead."
+            ),
+        }
+
+    try:
+        backend = make_url(url).get_backend_name()
+    except Exception:
+        backend = "sqlite"
+    if backend != "sqlite":
+        return {
+            "ok": False,
+            "backend": backend,
+            "path": None,
+            "kept": 0,
+            "message": f"Backup is only supported for SQLite (current backend: {backend}).",
+        }
+
+    src = Path(db_path) if db_path is not None else get_db_path()
+    if not src.exists():
+        # Ensure schema exists so an empty DB can still be backed up
+        init_db(db_path)
+    if not src.exists():
+        return {
+            "ok": False,
+            "backend": "sqlite",
+            "path": None,
+            "kept": 0,
+            "message": f"SQLite database file not found: {src}",
+        }
+
+    dest_root = Path(dest_dir)
+    dest_root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    dest = dest_root / f"soc_assistant_{stamp}.db"
+    # Avoid rare collisions within the same microsecond
+    if dest.exists():
+        n = 1
+        while True:
+            candidate = dest_root / f"soc_assistant_{stamp}_{n}.db"
+            if not candidate.exists():
+                dest = candidate
+                break
+            n += 1
+
+    with _lock:
+        # Online backup API — safer than raw copy when WAL is enabled
+        src_conn = sqlite3.connect(str(src))
+        try:
+            dst_conn = sqlite3.connect(str(dest))
+            try:
+                src_conn.backup(dst_conn)
+            finally:
+                dst_conn.close()
+        finally:
+            src_conn.close()
+
+    keep_n = max(1, int(keep))
+    backups = sorted(
+        dest_root.glob("soc_assistant_*.db"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    removed = 0
+    for old in backups[keep_n:]:
+        try:
+            old.unlink(missing_ok=True)
+            removed += 1
+        except OSError as exc:
+            logger.warning("Could not remove old backup %s: %s", old, exc)
+
+    remaining = len(list(dest_root.glob("soc_assistant_*.db")))
+    return {
+        "ok": True,
+        "backend": "sqlite",
+        "path": str(dest),
+        "kept": remaining,
+        "removed": removed,
+        "message": f"Backup saved to {dest} (keeping last {keep_n}).",
+    }

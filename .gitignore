@@ -49,3 +49,5 @@ data/containment_audit.jsonl
 data/*.db
 data/triage_export.csv
 
+# SQLite backups
+data/backups/

@@ -24,6 +24,7 @@ from containment import (
 )
 
 from db import (
+    backup_sqlite,
     ensure_db_ready,
     export_triage_to_csv,
     insert_triage_event,
@@ -244,6 +245,16 @@ def export_report_csv(dest=None):
     n = export_triage_to_csv(dest)
     print(f"✅ Exported {n} triage events → {dest}")
     return n
+
+
+def backup_database(dest_dir="data/backups", keep=10):
+    """Create a rotated SQLite backup (no-op message if Postgres)."""
+    result = backup_sqlite(dest_dir=dest_dir, keep=keep)
+    if result.get("ok"):
+        print(f"✅ {result.get('message')}")
+    else:
+        print(f"ℹ {result.get('message')}")
+    return result
 
 # ------------------------------------------------------------------------
 # MAIN ANALYSIS PIPELINE (WITH MATCHED ML PREDICTION)
@@ -587,7 +598,8 @@ def cli_menu():
         print("4. View Report")
         print("5. Unblock IP/User")
         print("6. Export Report CSV")
-        print("7. Exit\n")
+        print("7. Backup SQLite Database")
+        print("8. Exit\n")
 
         choice = input("Enter choice: ").strip()
 
@@ -604,6 +616,8 @@ def cli_menu():
         elif choice == "6":
             export_report_csv()
         elif choice == "7":
+            backup_database()
+        elif choice == "8":
             print("👋 Goodbye.")
             break
         else:

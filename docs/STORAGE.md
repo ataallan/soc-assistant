@@ -80,6 +80,25 @@ On first run (empty tables), `ensure_db_ready()` imports legacy files if present
 
 Migrated counts are logged to the console. Old files are left in place as backup. Works for both SQLite and Postgres backends.
 
+
+## SQLite backups
+
+While you stay on SQLite, create file backups of `data/soc_assistant.db`:
+
+```bash
+# Script
+python backup_db.py
+# or
+python -c "from db import backup_sqlite; print(backup_sqlite())"
+
+# CLI menu: option 7 — Backup SQLite Database
+```
+
+- Default destination: `data/backups/soc_assistant_YYYYMMDDTHHMMSSZ.db`
+- Rotation keeps the **last 10** backups
+- Dashboard: **System** → **Back up database** (`POST /backup`, login required)
+- If PostgreSQL is configured, backup returns a clear message and does nothing (use `pg_dump` / host tools)
+
 ## Export
 
 - **Dashboard:** `GET /report/export` (optional `?view=severe|escalated|total`)
@@ -92,8 +111,9 @@ python -c "from db import export_triage_to_csv; print(export_triage_to_csv('data
 ## Module API (`db.py`)
 
 - `get_engine`, `get_database_url` / `resolve_database_url`, `init_db`, `ensure_db_ready`
-- `insert_triage_event`, `list_triage_events(view=..., limit=...)`, `count_alerts`
+- `insert_triage_event`, `list_triage_events(view=..., limit=...)`, `count_alerts`, `triage_event_count`
 - `load_blocks`, `save_block`, `remove_block`, `append_audit`, `list_audit`
+- `get_storage_status`, `backup_sqlite(dest_dir=..., keep=10)`
 - `migrate_from_legacy_files`, `export_triage_to_csv`
 
 Backend selection: explicit `db_path=` (tests) always uses SQLite for that file; otherwise `SOC_DATABASE_URL` / `DATABASE_URL` win; else SQLite via `SOC_DB_PATH`.

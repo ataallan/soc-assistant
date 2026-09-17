@@ -17,10 +17,12 @@ from report_filters import (
     normalize_view,
 )
 from db import (
+    backup_sqlite,
     count_alerts,
     ensure_db_ready,
     export_triage_to_csv,
     get_db_path,
+    get_storage_status,
     list_triage_events,
 )
 
@@ -53,10 +55,19 @@ except Exception as e:
 # WAZUH FALLBACK
 # -------------------------------------------------
 try:
-    from wazuh_integration import fetch_wazuh_alerts, fetch_wazuh_alert_details
+    from wazuh_integration import (
+        fetch_wazuh_alerts,
+        fetch_wazuh_alert_details,
+        get_last_auth_error,
+        get_token,
+        wazuh_api_host,
+    )
 except Exception:
     def fetch_wazuh_alerts(limit=50): return []
     def fetch_wazuh_alert_details(limit=50): return []
+    def get_token(force_refresh=False): return None
+    def get_last_auth_error(): return "Wazuh integration unavailable."
+    def wazuh_api_host(): return "unknown"
 
 # -------------------------------------------------
 # FLASK
@@ -394,6 +405,86 @@ def unblock():
         execute_unblock_user(target)
 
     return redirect("/blocks")
+
+
+# -------------------------------------------------
+# OPS HEALTH
+# -------------------------------------------------
+def _watcher_running(name: str) -> bool:
+    t = watcher_threads.get(name)
+    return t is not None and t.is_alive()
+
+
+def collect_health() -> dict:
+    """Build operator-friendly health payload (no secrets)."""
+    storage = get_storage_status()
+
+    authenticated = False
+    wazuh_error = None
+    try:
+        authenticated = bool(get_token())
+        wazuh_error = get_last_auth_error()
+    except Exception as exc:
+        authenticated = False
+        wazuh_error = f"Could not check Wazuh authentication: {exc}"
+
+    return {
+        "storage": {
+            "backend": storage.get("backend"),
+            "location": storage.get("location"),
+            "triage_events": storage.get("triage_events", 0),
+            "blocks": storage.get("blocks", 0),
+        },
+        "wazuh": {
+            "authenticated": authenticated,
+            "api_host": wazuh_api_host(),
+            "last_error": wazuh_error,
+        },
+        "watchers": {
+            "csv": _watcher_running("csv"),
+            "wazuh": _watcher_running("wazuh"),
+        },
+    }
+
+
+@app.route("/health")
+@login_required
+def health_page():
+    health = collect_health()
+    flash = session.pop("health_flash", None)
+    return render_template(
+        "health.html",
+        user=session.get("user"),
+        health=health,
+        flash=flash,
+        can_backup=health["storage"]["backend"] == "sqlite",
+    )
+
+
+@app.route("/health.json")
+@login_required
+def health_json():
+    return jsonify(collect_health())
+
+
+@app.route("/backup", methods=["POST"])
+@login_required
+def backup_route():
+    result = backup_sqlite(dest_dir="data/backups", keep=10)
+    wants_json = (
+        request.accept_mimetypes.best == "application/json"
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or request.args.get("format") == "json"
+    )
+    if wants_json:
+        status = 200 if result.get("ok") else 400
+        return jsonify(result), status
+
+    session["health_flash"] = {
+        "ok": bool(result.get("ok")),
+        "message": result.get("message") or ("Backup complete." if result.get("ok") else "Backup unavailable."),
+    }
+    return redirect("/health")
 
 # -------------------------------------------------
 # ANALYTICS

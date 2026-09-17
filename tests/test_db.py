@@ -264,3 +264,52 @@ def test_get_engine_postgres_uses_pool_settings(monkeypatch):
         assert make_url(args[0]).get_backend_name() == "postgresql"
         assert kwargs.get("pool_pre_ping") is True
         assert kwargs.get("pool_size") == 5
+
+
+def test_backup_sqlite_creates_file(tmp_path, monkeypatch):
+    db_path = _temp_db(tmp_path, monkeypatch)
+    db.insert_triage_event(
+        {"timestamp": "t1", "log": "backup-me", "severity": "low", "rule_based": "monitor"},
+        db_path=db_path,
+    )
+    dest = tmp_path / "backups"
+    result = db.backup_sqlite(dest_dir=dest, keep=10, db_path=db_path)
+    assert result["ok"] is True
+    assert result["backend"] == "sqlite"
+    assert result["path"]
+    backup_path = Path(result["path"])
+    assert backup_path.exists()
+    assert backup_path.stat().st_size > 0
+    assert backup_path.parent == dest
+
+
+def test_backup_sqlite_rotation(tmp_path, monkeypatch):
+    db_path = _temp_db(tmp_path, monkeypatch)
+    dest = tmp_path / "backups_rot"
+    for _ in range(3):
+        result = db.backup_sqlite(dest_dir=dest, keep=2, db_path=db_path)
+        assert result["ok"] is True
+    files = list(dest.glob("soc_assistant_*.db"))
+    assert len(files) == 2
+
+
+def test_backup_sqlite_postgres_noop(monkeypatch):
+    monkeypatch.setenv(
+        "SOC_DATABASE_URL",
+        "postgresql+psycopg://soc:soc@localhost:5432/soc_assistant",
+    )
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    db.reset_connection()
+    result = db.backup_sqlite(dest_dir="/tmp/should_not_matter")
+    assert result["ok"] is False
+    assert result["backend"] == "postgres"
+    assert "PostgreSQL" in result["message"] or "Postgres" in result["message"]
+
+
+def test_get_storage_status_sqlite(tmp_path, monkeypatch):
+    db_path = _temp_db(tmp_path, monkeypatch)
+    status = db.get_storage_status(db_path=db_path)
+    assert status["backend"] == "sqlite"
+    assert str(db_path) in status["location"] or status["location"].endswith(db_path.name)
+    assert status["triage_events"] == 0
+    assert status["blocks"] == 0

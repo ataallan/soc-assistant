@@ -32,6 +32,7 @@ API_PASS = os.getenv("WAZUH_PASS", "")
 
 _TOKEN: Optional[str] = None
 _TOKEN_EXP = 0.0
+_LAST_AUTH_ERROR: Optional[str] = None
 _CACHED_ENDPOINT: Optional[str] = None
 _CACHED_ENDPOINT_EXP = 0.0
 _ENDPOINT_CACHE_TTL = 300  # seconds
@@ -52,19 +53,35 @@ def _url(path: str) -> str:
 
 
 def _credentials_ok() -> bool:
+    global _LAST_AUTH_ERROR
     if not API_PASS:
+        _LAST_AUTH_ERROR = "Wazuh password is not set. Add WAZUH_PASS to .env to enable live authentication."
         print("⚠️ WAZUH_PASS is not set. Add it to your .env to enable live Wazuh auth.")
         return False
     return True
 
 
+def get_last_auth_error() -> Optional[str]:
+    """Soft operator message from the most recent auth attempt (if any)."""
+    return _LAST_AUTH_ERROR
+
+
+def wazuh_api_host() -> str:
+    """Return host[:port] only from WAZUH_API (no credentials)."""
+    raw = (WAZUH_API or "").strip()
+    if "://" in raw:
+        raw = raw.split("://", 1)[1]
+    return raw.split("/", 1)[0] or "unknown"
+
+
 def get_token(force_refresh: bool = False) -> Optional[str]:
     """Authenticate with Wazuh and return a cached JWT."""
-    global _TOKEN, _TOKEN_EXP
+    global _TOKEN, _TOKEN_EXP, _LAST_AUTH_ERROR
     if not _credentials_ok():
         return None
 
     if _TOKEN and not force_refresh and (_TOKEN_EXP == 0 or time.time() < _TOKEN_EXP):
+        _LAST_AUTH_ERROR = None
         return _TOKEN
 
     auth_url = _url("/security/user/authenticate")
@@ -75,12 +92,17 @@ def get_token(force_refresh: bool = False) -> Optional[str]:
             if token:
                 _TOKEN = token
                 _TOKEN_EXP = time.time() + (50 * 60)
+                _LAST_AUTH_ERROR = None
                 return _TOKEN
+            _LAST_AUTH_ERROR = "Authentication succeeded but no token was returned."
             print("⚠️ Authentication succeeded but no token found in response.")
             return None
+        soft = f"Wazuh authentication failed (HTTP {resp.status_code})."
+        _LAST_AUTH_ERROR = soft
         print(f"⚠️ Wazuh authenticate failed ({resp.status_code}): {resp.text}")
         return None
     except Exception as e:
+        _LAST_AUTH_ERROR = f"Could not reach Wazuh API: {e}"
         print(f"⚠️ Error getting Wazuh token: {e}")
         return None
 
