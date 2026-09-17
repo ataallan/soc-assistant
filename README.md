@@ -11,6 +11,19 @@ Allan Munyira's capstone project: an **AI-assisted SOC triage** toolkit that com
 - Optional Wazuh 4.x API alert fetch
 
 
+
+
+## Live demo
+
+Follow the short defense / portfolio script: [docs/DEMO.md](docs/DEMO.md).
+
+Suggested captures live in [docs/screenshots/](docs/screenshots/). Starter assets:
+
+![Architecture flow](docs/screenshots/01-architecture.png)
+
+![Evaluation snapshot](docs/screenshots/02-evaluation.png)
+
+
 ## Architecture
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system diagram and component table.

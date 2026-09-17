@@ -1,0 +1,8 @@
+.............                                                            [100%]
+=============================== warnings summary ===============================
+tests/test_triage_rules.py::test_analyze_log_extracts_fields
+  /workspace/soc_assistant_clean/.venv/lib/python3.13/site-packages/sklearn/utils/validation.py:2830: UserWarning: X does not have valid feature names, but StandardScaler was fitted with feature names
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+13 passed, 1 warning in 0.83s
