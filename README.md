@@ -10,6 +10,13 @@ Allan Munyira's capstone project: an **AI-assisted SOC triage** toolkit that com
 - Email notifications for high/critical events (Gmail SMTP / App Password)
 - Optional Wazuh 4.x API alert fetch
 
+
+## Architecture
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system diagram and component table.
+
+Flow (short): **CSV / Wazuh** → **rules + ML triage** → **report / simulated blocks / email / Flask UI**.
+
 ## Setup
 
 ```bash
@@ -27,6 +34,17 @@ copy .env.example .env   # Windows
 ```
 
 Edit `.env` and set `SECRET_KEY`, mail credentials, and (optionally) Wazuh values. **Never commit `.env`.**
+
+
+## Model evaluation
+
+Run an honest hold-out evaluation (same feature pipeline as training):
+
+```bash
+python evaluate_model.py
+```
+
+This prints a classification report and writes [docs/evaluation_report.md](docs/evaluation_report.md) (accuracy, F1, confusion matrix, limitations).
 
 ## Train the model
 
