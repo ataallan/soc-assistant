@@ -47,6 +47,8 @@ REPORT_FIELDS = [
     "ml_assist",
     "containment_decision",
     "containment_note",
+    "matched_rule_id",
+    "rule_explain",
 ]
 
 def normalize_report_row(result: dict):
@@ -261,70 +263,72 @@ def backup_database(dest_dir="data/backups", keep=10):
 # ------------------------------------------------------------------------
 # MAIN ANALYSIS PIPELINE (WITH MATCHED ML PREDICTION)
 # ------------------------------------------------------------------------
-def analyze_and_predict(log: str, event_type="", description="", username="", timestamp=None, source_ip=""):
-    print(f"\n📝 LOG: {log}")
+def analyze_and_predict(log: str = "", event_type="", description="", username="", timestamp=None, source_ip="", raw_alert=None):
+    """Triage one alert via detection pipeline (normalize→enrich→YAML→triage_engine)."""
+    print(f"\n📝 LOG: {log or (raw_alert if not isinstance(raw_alert, dict) else (raw_alert.get('summary') or raw_alert.get('full_log') or ''))}")
 
-    # -----------------------------
-    # ML Prediction Block (label + confidence)
-    # -----------------------------
-    ml_pred = None
-    ml_confidence = 0.0
+    try:
+        from detection.pipeline import process_alert
+    except Exception as e:
+        print("⚠ Detection pipeline import failed, falling back to analyze_log:", e)
+        process_alert = None
+
+    if process_alert is not None:
+        if raw_alert is not None:
+            raw = raw_alert
+        else:
+            raw = {
+                "log": log,
+                "raw_message": log,
+                "event_type": event_type,
+                "description": description,
+                "username": username,
+                "timestamp": timestamp,
+                "source_ip": source_ip,
+            }
+        try:
+            result = process_alert(raw)
+        except Exception as e:
+            print("⚠ process_alert error, falling back:", e)
+            result = analyze_log(
+                log, event_type=event_type, description=description,
+                username=username, timestamp=timestamp, source_ip=source_ip,
+            )
+            result.setdefault("rule_severity", result.get("severity"))
+            result.setdefault("matched_rules", [])
+    else:
+        result = analyze_log(
+            log, event_type=event_type, description=description,
+            username=username, timestamp=timestamp, source_ip=source_ip,
+        )
+        result.setdefault("rule_severity", result.get("severity"))
+        result.setdefault("matched_rules", [])
+
+    # Prefer pipeline ML fields; keep optional parallel CLI model load for logging
+    ml_pred = result.get("ml_severity") or result.get("ml_prediction")
+    try:
+        ml_confidence = float(result.get("ml_confidence") or 0.0)
+    except (TypeError, ValueError):
+        ml_confidence = 0.0
+
     try:
         load_model_once()
+        if ml_pred is not None:
+            print(f"🤖 ML Assist: {ml_pred} (confidence={ml_confidence:.2f})")
+    except Exception:
+        pass
 
-        if MODEL and VECTORIZER and SCALER and LABEL_ENCODER:
-            text_input = f"{event_type} {description} {username}"
-
-            X_text = VECTORIZER.transform([str(text_input)])
-            # Weak numeric feature: hour-of-day only (avoid memorizing raw IP/timestamp)
-            try:
-                ts = pd.to_datetime(timestamp, errors="coerce")
-                hour_val = float(ts.hour) if pd.notna(ts) else 0.0
-            except Exception:
-                hour_val = 0.0
-
-            X_numeric = SCALER.transform([[hour_val]])
-
-            # Combine TF-IDF + hour
-            X_final = hstack([X_text, X_numeric])
-
-            y_raw = MODEL.predict(X_final)[0]
-            ml_pred = LABEL_ENCODER.inverse_transform([y_raw])[0]
-
-            if hasattr(MODEL, "predict_proba"):
-                try:
-                    import numpy as np
-                    proba = MODEL.predict_proba(X_final)[0]
-                    ml_confidence = float(np.max(proba))
-                except Exception:
-                    ml_confidence = 0.0
-
-            print(f"🤖 ML Prediction: {ml_pred} (confidence={ml_confidence:.2f})")
-
-    except Exception as e:
-        print("⚠ ML Error:", e)
-
-    # -------------------------------------------------------
-    # RULE-BASED ANALYSIS
-    # -------------------------------------------------------
-    result = analyze_log(log, event_type=event_type, description=description,
-                         username=username, timestamp=timestamp, source_ip=source_ip)
+    if result.get("matched_rules"):
+        top = result["matched_rules"][0]
+        print(f"📐 YAML rule: {top.get('id')} — {top.get('explain')}")
 
     severity = str(result.get("severity", "low")).lower()
-    recommendation = result.get("recommendation", "")
+    recommendation = result.get("recommendation") or result.get("rule_based") or ""
     user = result.get("user")
     ip = result.get("ip")
-    rule_severity = str(result.get("rule_severity") or classify_severity(log)).lower()
-    # Prefer ML fields from analyze_log when CLI parallel path missed them
-    if ml_pred is None and result.get("ml_severity") is not None:
-        ml_pred = result.get("ml_severity")
-    if result.get("ml_confidence") is not None:
-        try:
-            ml_confidence = float(result.get("ml_confidence") or ml_confidence)
-        except (TypeError, ValueError):
-            pass
+    rule_severity = str(result.get("rule_severity") or classify_severity(log or result.get("log") or "")).lower()
+    log_text = result.get("log") or log or ""
 
-    # Agreement gate before any auto-containment
     gate = should_auto_contain(
         rule_severity=rule_severity,
         ml_severity=ml_pred,
@@ -347,7 +351,9 @@ def analyze_and_predict(log: str, event_type="", description="", username="", ti
             f"🚨 Immediate Block ({severity.upper()})",
             f"Severity: {severity}\nRule: {rule_severity}\nML: {ml_pred} "
             f"(conf={ml_confidence:.2f})\nGate: {contain_reason}\n"
-            f"User: {user}\nIP: {ip}\n\nLog:\n{log}\n\nNote: {contain_note}"
+            f"Matched: {result.get('matched_rule_id')}\n"
+            f"Explain: {result.get('rule_explain')}\n"
+            f"User: {user}\nIP: {ip}\n\nLog:\n{log_text}\n\nNote: {contain_note}"
         )
 
         entry = {
@@ -355,7 +361,7 @@ def analyze_and_predict(log: str, event_type="", description="", username="", ti
             "severity": severity,
             "user": user,
             "ip": ip,
-            "log": log,
+            "log": log_text,
             "containment_decision": contain_reason,
             "containment_note": contain_note,
         }
@@ -375,7 +381,6 @@ def analyze_and_predict(log: str, event_type="", description="", username="", ti
         did_contain = True
 
     elif rule_severity in ("high", "critical") or recommendation == "escalate":
-        # Escalation signal but gate denied — do not block
         print(f"⚠ {contain_note}")
         print(f"   (triage logged; reason={contain_reason})")
 
@@ -385,10 +390,9 @@ def analyze_and_predict(log: str, event_type="", description="", username="", ti
     else:
         print("ℹ Low severity — no action.")
 
-    # SAVE RESULT (always include containment decision for operator visibility)
     save_to_reports({
         "timestamp": datetime.now(),
-        "log": log,
+        "log": log_text,
         "ml_prediction": ml_pred,
         "ml_confidence": round(ml_confidence, 4) if ml_pred is not None else None,
         "rule_based": recommendation,
@@ -397,9 +401,14 @@ def analyze_and_predict(log: str, event_type="", description="", username="", ti
         "ml_assist": bool(result.get("ml_assist", True)),
         "user": user,
         "ip": ip,
+        "matched_rule_id": result.get("matched_rule_id"),
+        "rule_explain": result.get("rule_explain"),
+        "matched_rules": result.get("matched_rules"),
+        "enrichment_notes": result.get("enrichment_notes"),
         "containment_decision": contain_reason if (did_contain or rule_severity in ("high", "critical") or recommendation == "escalate") else "n/a",
         "containment_note": contain_note if (did_contain or rule_severity in ("high", "critical") or recommendation == "escalate") else "",
     })
+
 
 # ------------------------------------------------------------------------
 # SAVE REPORT
@@ -407,6 +416,15 @@ def analyze_and_predict(log: str, event_type="", description="", username="", ti
 def save_to_reports(result: dict):
     """Persist triage to SQLite (source of truth); optionally mirror CSV/JSONL for export."""
     clean_row = normalize_report_row(result)
+    # Keep YAML match / enrichment extras inside raw_json for the report UI
+    try:
+        raw_payload = dict(clean_row)
+        for key in ("matched_rules", "matched_rule_id", "rule_explain", "enrichment_notes"):
+            if key in result:
+                raw_payload[key] = result.get(key)
+        clean_row["raw_json"] = json.dumps(raw_payload, default=str)
+    except Exception:
+        pass
 
     try:
         insert_triage_event(clean_row, source="triage")
@@ -562,21 +580,11 @@ def watch_wazuh(interval=10, stop_event=None):
                     # drop oldest-ish by rebuilding from a tail slice
                     seen = set(list(seen)[-max_seen // 2:])
 
-                # Enrich triage input with Wazuh rule context when present
-                rule_bits = []
-                if alert.get("rule_id") is not None:
-                    rule_bits.append(f"rule_id={alert.get('rule_id')}")
-                if alert.get("rule_level") is not None:
-                    rule_bits.append(f"rule_level={alert.get('rule_level')}")
-                if alert.get("severity"):
-                    rule_bits.append(f"wazuh_severity={alert.get('severity')}")
-                if alert.get("agent"):
-                    rule_bits.append(f"agent={alert.get('agent')}")
-                enriched = summary
-                if rule_bits:
-                    enriched = f"{summary} ({', '.join(rule_bits)})"
-
-                analyze_and_predict(enriched)
+                # Pass structured Wazuh alert into detection pipeline
+                analyze_and_predict(
+                    log=summary,
+                    raw_alert=alert,
+                )
 
             if _interruptible_sleep(interval, stop):
                 break

@@ -1,0 +1,14 @@
+id: DET-NET-001
+name: Authentication from public source IP
+enabled: true
+severity: medium
+priority: 50
+mitre: T1078
+conditions:
+  - field: src_ip_class
+    op: eq
+    value: public
+  - field: text
+    op: regex
+    value: "(login|auth|vpn|rdp|ssh)"
+explain: "Auth-related event from public IP {src_ip} (classification=public)."

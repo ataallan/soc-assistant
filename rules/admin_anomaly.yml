@@ -1,0 +1,11 @@
+id: DET-ADMIN-001
+name: Privileged / admin account anomaly
+enabled: true
+severity: high
+priority: 85
+mitre: T1078.001
+conditions:
+  - field: text
+    op: regex
+    value: "(root login|domain admin|privilege escalation|lateral movement|admin.*(login|fail)|sudo.*(fail|unauthorized))"
+explain: "Admin/privileged anomaly involving user '{user}' on host '{host}'."

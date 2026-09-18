@@ -1,0 +1,25 @@
+# Sample asset inventory for offline enrichment
+assets:
+  - name: dc01.lab.local
+    hostname: dc01.lab.local
+    ip: 10.0.0.10
+    criticality: critical
+    role: domain_controller
+    owner: identity-team
+    tags: [ad, windows, tier0]
+
+  - name: vpn-gw
+    hostname: vpn.lab.local
+    ip: 10.0.0.5
+    criticality: high
+    role: vpn_gateway
+    owner: network-team
+    tags: [vpn, edge]
+
+  - name: workstation-alice
+    hostname: ws-alice.lab.local
+    ip: 192.168.1.50
+    criticality: normal
+    role: endpoint
+    owner: alice.smith
+    tags: [workstation]

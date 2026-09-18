@@ -46,6 +46,7 @@
                         <th>Severity</th>
                         <th>ML Assist</th>
                         <th>Rule-Based</th>
+                        <th>Detection</th>
                         <th>User</th>
                         <th>IP</th>
                         <th>Case</th>
@@ -79,6 +80,16 @@
                             {% endif %}
                         </td>
                         <td>{{ row.rule_based }}</td>
+                        <td style="max-width: 220px; white-space: normal;">
+                            {% if row.matched_rule_id %}
+                              <div class="small"><code>{{ row.matched_rule_id }}</code></div>
+                              {% if row.rule_explain %}
+                                <div class="small text-secondary">{{ row.rule_explain }}</div>
+                              {% endif %}
+                            {% else %}
+                              <span class="text-secondary">—</span>
+                            {% endif %}
+                        </td>
                         <td>{{ row.user }}</td>
                         <td>{{ row.ip }}</td>
                         <td>
@@ -98,7 +109,7 @@
                     {% endfor %}
                     {% else %}
                     <tr>
-                        <td colspan="8" class="text-center text-secondary py-4">
+                        <td colspan="9" class="text-center text-secondary py-4">
                             No rows match this filter. Run a CSV or Wazuh watcher to populate the triage report.
                         </td>
                     </tr>

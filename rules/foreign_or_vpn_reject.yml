@@ -1,0 +1,11 @@
+id: DET-VPN-001
+name: VPN / foreign login rejection signals
+enabled: true
+severity: high
+priority: 70
+mitre: T1133
+conditions:
+  - field: text
+    op: regex
+    value: "(foreign ip login|vpn gateway rejected|rdp authentication)"
+explain: "VPN/RDP/foreign login signal matched for '{user}' @ {src_ip}."

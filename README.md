@@ -15,6 +15,7 @@ An **AI-assisted SOC triage** toolkit that combines rule-based analysis with a s
 - Analyst labeling template — see [docs/LABELING.md](docs/LABELING.md)
 - SOC case / ticket workflow (open from triage, notes, status, assignee) — see [docs/CASES.md](docs/CASES.md)
 - Simple admin/analyst RBAC + session hardening — see [docs/SECURITY.md](docs/SECURITY.md)
+- **Detection Phase A** (normalize → enrich → YAML rules → triage) — see [docs/DETECTION.md](docs/DETECTION.md)
 
 
 
@@ -34,7 +35,7 @@ Suggested captures live in [docs/screenshots/](docs/screenshots/). Starter asset
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system diagram and component table.
 
-Flow (short): **CSV / Wazuh** → **rules + ML triage** → **DB (triage + blocks + audit) / email / Flask UI**. CSV is for ingest and export only.
+Flow (short): **CSV / Wazuh** → **normalize → enrich → YAML rules** → **rules + ML triage (assist-only)** → **DB / email / Flask UI**. CSV is for ingest and export only. Multi-tenant customer ingest API is a planned next step.
 
 ## Setup
 

@@ -1,0 +1,11 @@
+id: DET-BRUTE-002
+name: Numeric failure count threshold
+enabled: true
+severity: high
+priority: 75
+mitre: T1110
+conditions:
+  - field: text
+    op: regex
+    value: "\\b([5-9]|\\d{2,})\\s+(attempts|times|failures?)\\b"
+explain: "Elevated failure count pattern detected from {src_ip} — possible credential attack."

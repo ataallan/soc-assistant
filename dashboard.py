@@ -496,6 +496,8 @@ def stop_wazuh_watch():
 
 def enrich_triage_rows(rows):
     """Attach honest ML assist display fields for templates."""
+    import json as _json
+
     threshold = get_ml_confidence_threshold()
     assist_only = get_ml_assist_only()
     enriched = []
@@ -517,6 +519,20 @@ def enrich_triage_rows(rows):
             r["severity_source"] = "rules" if assist_only or disp["low_confidence"] else "ml"
         if r.get("ml_assist") is None:
             r["ml_assist"] = True if assist_only else (not disp["used"])
+
+        # Surface YAML detection match from raw_json when present
+        if not r.get("matched_rule_id") or not r.get("rule_explain"):
+            raw = r.get("raw_json")
+            if raw:
+                try:
+                    payload = _json.loads(raw) if isinstance(raw, str) else raw
+                    if isinstance(payload, dict):
+                        r.setdefault("matched_rule_id", payload.get("matched_rule_id"))
+                        r.setdefault("rule_explain", payload.get("rule_explain"))
+                        if not r.get("matched_rules"):
+                            r["matched_rules"] = payload.get("matched_rules")
+                except Exception:
+                    pass
         enriched.append(r)
     return enriched
 

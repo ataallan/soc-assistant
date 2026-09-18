@@ -1,0 +1,11 @@
+id: DET-BRUTE-001
+name: Brute force / authentication storm
+enabled: true
+severity: high
+priority: 80
+mitre: T1110
+conditions:
+  - field: text
+    op: regex
+    value: "(brute[- ]?force|password spray|authentication storm|multiple (failed|authentication) (login )?failures?|excessive authentication)"
+explain: "Brute-force pattern matched on '{src_ip}' user '{user}': authentication failure storm indicators in the alert text."

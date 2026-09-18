@@ -1,0 +1,5 @@
+ip,hostname,name,criticality,role,owner,tags
+10.0.0.10,dc01.lab.local,dc01.lab.local,critical,domain_controller,identity-team,"ad,windows,tier0"
+10.0.0.5,vpn.lab.local,vpn-gw,high,vpn_gateway,network-team,"vpn,edge"
+192.168.1.50,ws-alice.lab.local,workstation-alice,normal,endpoint,alice.smith,workstation
+172.16.5.12,fs01.lab.local,file-server,high,file_server,storage-team,files

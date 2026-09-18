@@ -1,0 +1,14 @@
+id: DET-ASSET-001
+name: Critical asset with elevated severity hint
+enabled: true
+severity: critical
+priority: 90
+mitre: T1078
+conditions:
+  - field: enrichment.asset.criticality
+    op: in_list
+    values: [critical, high]
+  - field: severity_hint
+    op: in_list
+    values: [high, critical, "10", "11", "12", "13", "14", "15"]
+explain: "High/critical severity on criticality={asset_criticality} asset '{asset_name}' (src={src_ip})."

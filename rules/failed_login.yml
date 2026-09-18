@@ -1,0 +1,11 @@
+id: DET-AUTH-001
+name: Failed login
+enabled: true
+severity: medium
+priority: 40
+mitre: T1110
+conditions:
+  - field: text
+    op: contains
+    value: failed login
+explain: "Failed login observed for user '{user}' from {src_ip}."
