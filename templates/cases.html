@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Cases{% endblock %}
+
+{% block content %}
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+  <div>
+    <h1 class="page-title">Cases</h1>
+    <p class="page-subtitle">Open, track, and close investigation tickets from triage or manually.</p>
+  </div>
+  <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#newCaseForm" aria-expanded="false">
+    <i class="bi bi-plus-lg me-1"></i> New case
+  </button>
+</div>
+
+{% if flash %}
+<div class="notice-bar mb-3 {% if not flash.ok %}border-danger{% endif %}">
+  {{ flash.message }}
+</div>
+{% endif %}
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="soc-panel text-center py-3">
+      <div class="text-secondary small">Open</div>
+      <div class="fs-4 fw-semibold">{{ counts.open if counts else 0 }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="soc-panel text-center py-3">
+      <div class="text-secondary small">Investigating</div>
+      <div class="fs-4 fw-semibold">{{ counts.investigating if counts else 0 }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="soc-panel text-center py-3">
+      <div class="text-secondary small">Contained</div>
+      <div class="fs-4 fw-semibold">{{ counts.contained if counts else 0 }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="soc-panel text-center py-3">
+      <div class="text-secondary small">Closed</div>
+      <div class="fs-4 fw-semibold">{{ counts.closed if counts else 0 }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="collapse mb-3" id="newCaseForm">
+  <div class="soc-panel">
+    <h4 class="mb-3" style="font-size:1.05rem;">Create case</h4>
+    <form method="POST" action="/cases/create" class="row g-2">
+      <div class="col-md-6">
+        <label class="form-label small text-secondary">Title</label>
+        <input type="text" name="title" class="form-control form-control-sm" required placeholder="Short case title">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small text-secondary">Severity</label>
+        <select name="severity" class="form-select form-select-sm">
+          <option value="low">low</option>
+          <option value="medium" selected>medium</option>
+          <option value="high">high</option>
+          <option value="critical">critical</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small text-secondary">Assignee</label>
+        <input type="text" name="assignee" class="form-control form-control-sm" value="{{ user or '' }}" placeholder="analyst">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label small text-secondary">IP</label>
+        <input type="text" name="ip" class="form-control form-control-sm" placeholder="optional">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label small text-secondary">User entity</label>
+        <input type="text" name="user_entity" class="form-control form-control-sm" placeholder="optional">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label small text-secondary">Triage event ID</label>
+        <input type="number" name="triage_event_id" class="form-control form-control-sm" placeholder="optional">
+      </div>
+      <div class="col-12">
+        <label class="form-label small text-secondary">Summary</label>
+        <textarea name="summary" class="form-control form-control-sm" rows="2" placeholder="Context for the investigation"></textarea>
+      </div>
+      <div class="col-12">
+        <button type="submit" class="btn btn-sm btn-primary">Open case</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="filter-links mb-3">
+  <a href="/cases?status=open" class="{% if status == 'open' %}active{% endif %}">Open</a>
+  <a href="/cases?status=investigating" class="{% if status == 'investigating' %}active{% endif %}">Investigating</a>
+  <a href="/cases?status=contained" class="{% if status == 'contained' %}active{% endif %}">Contained</a>
+  <a href="/cases?status=closed" class="{% if status == 'closed' %}active{% endif %}">Closed</a>
+  <a href="/cases?status=all" class="{% if status == 'all' %}active{% endif %}">All</a>
+</div>
+
+<div class="soc-panel">
+  {% if cases %}
+  <div class="table-scroll">
+    <table class="table table-bordered table-striped mb-0 align-middle">
+      <thead>
+        <tr>
+          <th style="width:4rem;">ID</th>
+          <th>Title</th>
+          <th style="width:7rem;">Status</th>
+          <th style="width:7rem;">Severity</th>
+          <th style="width:9rem;">Assignee</th>
+          <th style="width:8rem;">Source</th>
+          <th style="width:11rem;">Updated</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in cases %}
+        <tr>
+          <td class="text-secondary"><a href="/cases/{{ c.id }}">#{{ c.id }}</a></td>
+          <td>
+            <a href="/cases/{{ c.id }}" class="fw-medium text-decoration-none">{{ c.title }}</a>
+            {% if c.ip or c.user_entity %}
+            <div class="small text-secondary">
+              {% if c.ip %}<span class="me-2">IP: {{ c.ip }}</span>{% endif %}
+              {% if c.user_entity %}<span>User: {{ c.user_entity }}</span>{% endif %}
+            </div>
+            {% endif %}
+          </td>
+          <td><span class="badge text-bg-secondary">{{ c.status }}</span></td>
+          <td>
+            <span class="badge {% if c.severity == 'critical' or c.severity == 'high' %}text-bg-danger{% elif c.severity == 'medium' %}text-bg-warning{% else %}text-bg-secondary{% endif %}">
+              {{ c.severity }}
+            </span>
+          </td>
+          <td class="text-secondary">{{ c.assignee or '—' }}</td>
+          <td class="text-secondary">{{ c.source }}{% if c.triage_event_id %} · #{{ c.triage_event_id }}{% endif %}</td>
+          <td class="small text-secondary">{{ c.updated_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-secondary mb-0">
+    No cases in this view. Open one from the triage report or use <strong>New case</strong>.
+  </p>
+  {% endif %}
+</div>
+
+{% endblock %}

@@ -17,18 +17,24 @@ from report_filters import (
     normalize_view,
 )
 from db import (
+    add_note,
     backup_sqlite,
     count_alerts,
+    counts_by_status,
+    create_case,
     ensure_db_ready,
     export_triage_to_csv,
+    get_case,
     get_db_path,
     get_storage_status,
     insert_label_queue_items,
     label_queue_counts,
+    list_cases,
     list_label_queue,
     list_triage_events,
     save_label,
     skip_label,
+    update_case_status,
 )
 from triage_engine import (
     format_ml_assist_display,
@@ -731,6 +737,159 @@ def labels_retrain():
         return jsonify(payload), status
     session["labels_flash"] = {"ok": payload["ok"], "message": payload["message"]}
     return redirect("/labels")
+
+
+
+# -------------------------------------------------
+# CASES (lightweight SOC ticket workflow)
+# -------------------------------------------------
+def _wants_json() -> bool:
+    return bool(
+        request.is_json
+        or request.accept_mimetypes.best == "application/json"
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or request.args.get("format") == "json"
+    )
+
+
+@app.route("/cases")
+@login_required
+def cases_page():
+    status = (request.args.get("status") or "open").strip().lower()
+    if status not in ("all", "open", "investigating", "contained", "closed"):
+        status = "open"
+    cases = list_cases(status=status if status != "all" else "all")
+    counts = counts_by_status()
+    flash = session.pop("cases_flash", None)
+    return render_template(
+        "cases.html",
+        user=session.get("user"),
+        cases=cases,
+        counts=counts,
+        status=status,
+        flash=flash,
+        ml_assist_only=get_ml_assist_only(),
+    )
+
+
+@app.route("/cases/<int:case_id>")
+@login_required
+def case_detail(case_id: int):
+    case = get_case(case_id, include_notes=True)
+    if case is None:
+        session["cases_flash"] = {"ok": False, "message": f"Case #{case_id} not found."}
+        return redirect("/cases")
+    flash = session.pop("cases_flash", None)
+    return render_template(
+        "case_detail.html",
+        user=session.get("user"),
+        case=case,
+        flash=flash,
+        ml_assist_only=get_ml_assist_only(),
+    )
+
+
+@app.route("/cases/create", methods=["POST"])
+@login_required
+def cases_create():
+    data = request.form if request.form else (request.json or {})
+    triage_raw = data.get("triage_event_id") or data.get("triage_id")
+    triage_event_id = None
+    if triage_raw not in (None, ""):
+        try:
+            triage_event_id = int(triage_raw)
+        except (TypeError, ValueError):
+            session["cases_flash"] = {"ok": False, "message": "Invalid triage event id."}
+            return redirect("/cases")
+
+    title = (data.get("title") or "").strip() or None
+    summary = data.get("summary")
+    severity = (data.get("severity") or "medium").strip().lower()
+    assignee = (data.get("assignee") or session.get("user") or "").strip() or None
+    source = (data.get("source") or ("triage" if triage_event_id else "manual")).strip().lower()
+    ip = data.get("ip")
+    user_entity = data.get("user_entity") or data.get("user")
+
+    try:
+        case = create_case(
+            title=title,
+            severity=severity,
+            assignee=assignee,
+            triage_event_id=triage_event_id,
+            source=source,
+            summary=summary,
+            ip=ip,
+            user_entity=user_entity,
+        )
+        msg = f"Opened case #{case['id']}."
+        ok = True
+        case_id = case["id"]
+    except Exception as exc:
+        msg = f"Could not create case: {exc}"
+        ok = False
+        case_id = None
+
+    if _wants_json():
+        payload = {"ok": ok, "message": msg}
+        if case_id is not None:
+            payload["id"] = case_id
+        return jsonify(payload), (200 if ok else 400)
+
+    session["cases_flash"] = {"ok": ok, "message": msg}
+    if ok and case_id is not None:
+        return redirect(f"/cases/{case_id}")
+    return redirect("/cases")
+
+
+@app.route("/cases/<int:case_id>/note", methods=["POST"])
+@login_required
+def cases_add_note(case_id: int):
+    data = request.form if request.form else (request.json or {})
+    body = data.get("body") or data.get("note") or ""
+    author = (data.get("author") or session.get("user") or "").strip() or None
+    try:
+        note = add_note(case_id, body, author=author)
+        msg = "Note added."
+        ok = True
+        out = note
+    except Exception as exc:
+        msg = f"Could not add note: {exc}"
+        ok = False
+        out = {"error": str(exc)}
+
+    if _wants_json():
+        return jsonify({"ok": ok, "message": msg, **out}), (200 if ok else 400)
+    session["cases_flash"] = {"ok": ok, "message": msg}
+    return redirect(f"/cases/{case_id}")
+
+
+@app.route("/cases/<int:case_id>/status", methods=["POST"])
+@login_required
+def cases_update_status(case_id: int):
+    data = request.form if request.form else (request.json or {})
+    status = data.get("status")
+    resolution_notes = data.get("resolution_notes")
+    assignee = data.get("assignee")
+    # Only pass assignee when the field is present in the form/json
+    kwargs = {}
+    if "resolution_notes" in data:
+        kwargs["resolution_notes"] = resolution_notes
+    if "assignee" in data:
+        kwargs["assignee"] = assignee
+    try:
+        case = update_case_status(case_id, status, **kwargs)
+        msg = f"Case #{case_id} → {case['status']}."
+        ok = True
+        out = case
+    except Exception as exc:
+        msg = f"Could not update status: {exc}"
+        ok = False
+        out = {"error": str(exc)}
+
+    if _wants_json():
+        return jsonify({"ok": ok, "message": msg, **out}), (200 if ok else 400)
+    session["cases_flash"] = {"ok": ok, "message": msg}
+    return redirect(f"/cases/{case_id}")
 
 
 # -------------------------------------------------

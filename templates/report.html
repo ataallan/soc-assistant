@@ -48,6 +48,7 @@
                         <th>Rule-Based</th>
                         <th>User</th>
                         <th>IP</th>
+                        <th>Case</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -80,11 +81,22 @@
                         <td>{{ row.rule_based }}</td>
                         <td>{{ row.user }}</td>
                         <td>{{ row.ip }}</td>
+                        <td>
+                            {% if row.id %}
+                            <form method="POST" action="/cases/create" class="d-inline">
+                              <input type="hidden" name="triage_event_id" value="{{ row.id }}">
+                              <input type="hidden" name="source" value="triage">
+                              <button type="submit" class="btn btn-sm btn-outline-primary">Open case</button>
+                            </form>
+                            {% else %}
+                              <span class="text-secondary">—</span>
+                            {% endif %}
+                        </td>
                     </tr>
                     {% endfor %}
                     {% else %}
                     <tr>
-                        <td colspan="7" class="text-center text-secondary py-4">
+                        <td colspan="8" class="text-center text-secondary py-4">
                             No rows match this filter. Run a CSV or Wazuh watcher to populate the triage report.
                         </td>
                     </tr>

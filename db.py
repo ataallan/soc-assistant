@@ -158,6 +158,53 @@ class ContainmentAudit(Base):
     detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
+
+class Case(Base):
+    """Lightweight SOC case / ticket linked optionally to a triage event."""
+
+    __tablename__ = "cases"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('open', 'investigating', 'contained', 'closed')",
+            name="case_status",
+        ),
+        CheckConstraint(
+            "severity IN ('low', 'medium', 'high', 'critical')",
+            name="case_severity",
+        ),
+        CheckConstraint(
+            "source IN ('triage', 'manual', 'wazuh')",
+            name="case_source",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="open", index=True)
+    severity: Mapped[str] = mapped_column(Text, nullable=False, default="medium", index=True)
+    assignee: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    triage_event_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False, default="manual")
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ip: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    user_entity: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    resolution_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class CaseNote(Base):
+    """Chronological analyst notes on a case."""
+
+    __tablename__ = "case_notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    case_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    author: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 TRIAGE_COLUMNS = [
     "id",
     "timestamp",
@@ -1132,6 +1179,235 @@ def label_queue_counts(db_path: Optional[Path | str] = None) -> Dict[str, int]:
         "skipped": skipped,
         "alerts_labeled": alerts_n,
     }
+
+
+
+# ---------------------------------------------------------------------------
+# Cases (lightweight SOC ticket workflow)
+# ---------------------------------------------------------------------------
+
+VALID_CASE_STATUSES = frozenset({"open", "investigating", "contained", "closed"})
+VALID_CASE_SEVERITIES = frozenset({"low", "medium", "high", "critical"})
+VALID_CASE_SOURCES = frozenset({"triage", "manual", "wazuh"})
+
+
+def _case_to_dict(row: Case) -> Dict[str, Any]:
+    return {
+        "id": row.id,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+        "title": row.title,
+        "status": row.status,
+        "severity": row.severity,
+        "assignee": row.assignee,
+        "triage_event_id": row.triage_event_id,
+        "source": row.source,
+        "summary": row.summary,
+        "ip": row.ip,
+        "user_entity": row.user_entity,
+        "resolution_notes": row.resolution_notes,
+    }
+
+
+def _case_note_to_dict(row: CaseNote) -> Dict[str, Any]:
+    return {
+        "id": row.id,
+        "case_id": row.case_id,
+        "created_at": row.created_at,
+        "author": row.author,
+        "body": row.body,
+    }
+
+
+def create_case(
+    *,
+    title: Optional[str] = None,
+    status: str = "open",
+    severity: str = "medium",
+    assignee: Optional[str] = None,
+    triage_event_id: Optional[int] = None,
+    source: str = "manual",
+    summary: Optional[str] = None,
+    ip: Optional[str] = None,
+    user_entity: Optional[str] = None,
+    resolution_notes: Optional[str] = None,
+    db_path: Optional[Path | str] = None,
+) -> Dict[str, Any]:
+    """Create a case manually or from a triage event id.
+
+    When triage_event_id is set and title/summary/ip/user/severity are omitted,
+    fields are filled from the triage event. Source defaults to triage in that case.
+    """
+    st = (status or "open").strip().lower()
+    if st not in VALID_CASE_STATUSES:
+        raise ValueError(f"Invalid case status: {status}")
+    sev = (severity or "medium").strip().lower()
+    if sev not in VALID_CASE_SEVERITIES:
+        raise ValueError(f"Invalid case severity: {severity}")
+    src = (source or "manual").strip().lower()
+    if src not in VALID_CASE_SOURCES:
+        raise ValueError(f"Invalid case source: {source}")
+
+    init_db(db_path)
+    with _lock:
+        with session_scope(db_path) as session:
+            if triage_event_id is not None:
+                event = session.get(TriageEvent, int(triage_event_id))
+                if event is None:
+                    raise KeyError(f"triage_event id {triage_event_id} not found")
+                if not title:
+                    log_snip = (event.log or "").strip()
+                    title = (log_snip[:120] + ("…" if len(log_snip) > 120 else "")) or f"Triage #{event.id}"
+                if summary is None:
+                    summary = event.log
+                if ip is None:
+                    ip = event.ip
+                if user_entity is None:
+                    user_entity = event.user
+                if severity == "medium" and event.severity:
+                    ev_sev = (event.severity or "").strip().lower()
+                    if ev_sev in VALID_CASE_SEVERITIES:
+                        sev = ev_sev
+                if src == "manual":
+                    src = "triage"
+
+            title_final = (title or "").strip() or "Untitled case"
+            now = _utc_now_iso()
+            row = Case(
+                created_at=now,
+                updated_at=now,
+                title=title_final,
+                status=st,
+                severity=sev,
+                assignee=(assignee or "").strip() or None,
+                triage_event_id=int(triage_event_id) if triage_event_id is not None else None,
+                source=src,
+                summary=summary,
+                ip=ip,
+                user_entity=user_entity,
+                resolution_notes=resolution_notes,
+            )
+            session.add(row)
+            session.flush()
+            return _case_to_dict(row)
+
+
+def list_cases(
+    *,
+    status: Optional[str] = None,
+    limit: Optional[int] = None,
+    db_path: Optional[Path | str] = None,
+) -> List[Dict[str, Any]]:
+    """List cases newest-first. status=None or 'all' returns every status."""
+    init_db(db_path)
+    with _lock:
+        with session_scope(db_path) as session:
+            stmt = select(Case).order_by(Case.id.desc())
+            if status and status != "all":
+                st = status.strip().lower()
+                if st not in VALID_CASE_STATUSES:
+                    raise ValueError(f"Invalid case status filter: {status}")
+                stmt = stmt.where(Case.status == st)
+            rows = session.scalars(stmt).all()
+            out = [_case_to_dict(r) for r in rows]
+    if limit is not None and limit >= 0:
+        out = out[: int(limit)]
+    return out
+
+
+def get_case(
+    case_id: int,
+    *,
+    include_notes: bool = True,
+    db_path: Optional[Path | str] = None,
+) -> Optional[Dict[str, Any]]:
+    init_db(db_path)
+    with _lock:
+        with session_scope(db_path) as session:
+            row = session.get(Case, int(case_id))
+            if row is None:
+                return None
+            out = _case_to_dict(row)
+            if include_notes:
+                notes = session.scalars(
+                    select(CaseNote)
+                    .where(CaseNote.case_id == int(case_id))
+                    .order_by(CaseNote.id.asc())
+                ).all()
+                out["notes"] = [_case_note_to_dict(n) for n in notes]
+            return out
+
+
+def add_note(
+    case_id: int,
+    body: str,
+    *,
+    author: Optional[str] = None,
+    db_path: Optional[Path | str] = None,
+) -> Dict[str, Any]:
+    text_body = (body or "").strip()
+    if not text_body:
+        raise ValueError("Note body is required")
+    init_db(db_path)
+    with _lock:
+        with session_scope(db_path) as session:
+            case = session.get(Case, int(case_id))
+            if case is None:
+                raise KeyError(f"case id {case_id} not found")
+            now = _utc_now_iso()
+            note = CaseNote(
+                case_id=int(case_id),
+                created_at=now,
+                author=(author or "").strip() or None,
+                body=text_body,
+            )
+            case.updated_at = now
+            session.add(note)
+            session.flush()
+            return _case_note_to_dict(note)
+
+
+def update_case_status(
+    case_id: int,
+    status: str,
+    *,
+    resolution_notes: Optional[str] = None,
+    assignee: Optional[str] = None,
+    db_path: Optional[Path | str] = None,
+) -> Dict[str, Any]:
+    st = (status or "").strip().lower()
+    if st not in VALID_CASE_STATUSES:
+        raise ValueError(f"Invalid case status: {status}")
+    init_db(db_path)
+    with _lock:
+        with session_scope(db_path) as session:
+            case = session.get(Case, int(case_id))
+            if case is None:
+                raise KeyError(f"case id {case_id} not found")
+            case.status = st
+            case.updated_at = _utc_now_iso()
+            if resolution_notes is not None:
+                case.resolution_notes = resolution_notes
+            if assignee is not None:
+                case.assignee = (assignee or "").strip() or None
+            session.flush()
+            return _case_to_dict(case)
+
+
+def counts_by_status(db_path: Optional[Path | str] = None) -> Dict[str, int]:
+    init_db(db_path)
+    with _lock:
+        with session_scope(db_path) as session:
+            counts = {s: 0 for s in ("open", "investigating", "contained", "closed")}
+            rows = session.execute(
+                select(Case.status, func.count()).group_by(Case.status)
+            ).all()
+            for status, n in rows:
+                key = (status or "").strip().lower()
+                if key in counts:
+                    counts[key] = int(n or 0)
+            counts["total"] = sum(counts[s] for s in ("open", "investigating", "contained", "closed"))
+            return counts
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Case #{{ case.id }}{% endblock %}
+
+{% block content %}
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+  <div>
+    <h1 class="page-title">Case #{{ case.id }}</h1>
+    <p class="page-subtitle mb-0">{{ case.title }}</p>
+  </div>
+  <a href="/cases" class="btn btn-secondary btn-sm">← Cases</a>
+</div>
+
+{% if flash %}
+<div class="notice-bar mb-3 {% if not flash.ok %}border-danger{% endif %}">
+  {{ flash.message }}
+</div>
+{% endif %}
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-8">
+    <div class="soc-panel mb-3">
+      <div class="d-flex flex-wrap gap-2 mb-3">
+        <span class="badge text-bg-secondary">{{ case.status }}</span>
+        <span class="badge {% if case.severity == 'critical' or case.severity == 'high' %}text-bg-danger{% elif case.severity == 'medium' %}text-bg-warning{% else %}text-bg-secondary{% endif %}">
+          {{ case.severity }}
+        </span>
+        <span class="badge text-bg-secondary">{{ case.source }}</span>
+      </div>
+      <dl class="row mb-0 small">
+        <dt class="col-sm-3 text-secondary">Assignee</dt>
+        <dd class="col-sm-9">{{ case.assignee or '—' }}</dd>
+        <dt class="col-sm-3 text-secondary">IP</dt>
+        <dd class="col-sm-9">{{ case.ip or '—' }}</dd>
+        <dt class="col-sm-3 text-secondary">User</dt>
+        <dd class="col-sm-9">{{ case.user_entity or '—' }}</dd>
+        <dt class="col-sm-3 text-secondary">Triage event</dt>
+        <dd class="col-sm-9">
+          {% if case.triage_event_id %}
+            #{{ case.triage_event_id }}
+            <a class="ms-2" href="/report">Triage report</a>
+          {% else %}—{% endif %}
+        </dd>
+        <dt class="col-sm-3 text-secondary">Created</dt>
+        <dd class="col-sm-9">{{ case.created_at }}</dd>
+        <dt class="col-sm-3 text-secondary">Updated</dt>
+        <dd class="col-sm-9">{{ case.updated_at }}</dd>
+      </dl>
+      {% if case.summary %}
+      <hr class="border-secondary opacity-25">
+      <div class="text-secondary small mb-1">Summary</div>
+      <div style="white-space:pre-wrap;">{{ case.summary }}</div>
+      {% endif %}
+      {% if case.resolution_notes %}
+      <hr class="border-secondary opacity-25">
+      <div class="text-secondary small mb-1">Resolution notes</div>
+      <div style="white-space:pre-wrap;">{{ case.resolution_notes }}</div>
+      {% endif %}
+    </div>
+
+    <div class="soc-panel mb-3">
+      <h4 class="mb-3" style="font-size:1.05rem;">Notes</h4>
+      {% if case.notes %}
+      <ul class="list-unstyled mb-3">
+        {% for n in case.notes %}
+        <li class="mb-3 pb-3 border-bottom border-secondary border-opacity-25">
+          <div class="small text-secondary mb-1">
+            {{ n.author or 'analyst' }} · {{ n.created_at }}
+          </div>
+          <div style="white-space:pre-wrap;">{{ n.body }}</div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="text-secondary small">No notes yet.</p>
+      {% endif %}
+      <form method="POST" action="/cases/{{ case.id }}/note">
+        <label class="form-label small text-secondary">Add note</label>
+        <textarea name="body" class="form-control form-control-sm mb-2" rows="3" required placeholder="Investigation update…"></textarea>
+        <button type="submit" class="btn btn-sm btn-outline-primary">Save note</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="soc-panel mb-3">
+      <h4 class="mb-3" style="font-size:1.05rem;">Update status</h4>
+      <form method="POST" action="/cases/{{ case.id }}/status" class="d-grid gap-2">
+        <div>
+          <label class="form-label small text-secondary">Status</label>
+          <select name="status" class="form-select form-select-sm">
+            {% for s in ['open', 'investigating', 'contained', 'closed'] %}
+            <option value="{{ s }}" {% if case.status == s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="form-label small text-secondary">Assignee</label>
+          <input type="text" name="assignee" class="form-control form-control-sm" value="{{ case.assignee or user or '' }}">
+        </div>
+        <div>
+          <label class="form-label small text-secondary">Resolution notes</label>
+          <textarea name="resolution_notes" class="form-control form-control-sm" rows="3" placeholder="Optional close-out notes">{{ case.resolution_notes or '' }}</textarea>
+        </div>
+        <button type="submit" class="btn btn-sm btn-primary">Save</button>
+      </form>
+      <div class="d-flex flex-wrap gap-1 mt-3">
+        {% for s in ['open', 'investigating', 'contained', 'closed'] %}
+        <form method="POST" action="/cases/{{ case.id }}/status" class="d-inline">
+          <input type="hidden" name="status" value="{{ s }}">
+          <button type="submit" class="btn btn-sm {% if case.status == s %}btn-primary{% else %}btn-outline-secondary{% endif %}" {% if case.status == s %}disabled{% endif %}>
+            {{ s }}
+          </button>
+        </form>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

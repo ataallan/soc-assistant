@@ -13,6 +13,7 @@ An **AI-assisted SOC triage** toolkit that combines rule-based analysis with a s
 - Optional Wazuh 4.x API alert fetch
 - Flexible DB persistence (SQLite by default; optional PostgreSQL) for triage, blocks, and audit (CSV export available)
 - Analyst labeling template — see [docs/LABELING.md](docs/LABELING.md)
+- SOC case / ticket workflow (open from triage, notes, status, assignee) — see [docs/CASES.md](docs/CASES.md)
 
 
 
@@ -153,6 +154,7 @@ Automatic IP/user blocks from triage **require rule + ML agreement** (or rules m
 | `data/sample_logs.csv` | Sample training / watch data |
 | `data/labeling_template.csv` | Analyst labeling CSV template |
 | `docs/LABELING.md` | How to label, merge, retrain, evaluate |
+| `docs/CASES.md` | SOC case / ticket workflow |
 | `report_filters.py` | Dashboard report view filters + alert counts |
 | `db.py` | SQLAlchemy storage layer (SQLite default, optional Postgres) |
 | `docs/STORAGE.md` | DB path, Postgres Docker one-liner, migration, export |
