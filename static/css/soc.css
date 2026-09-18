@@ -785,6 +785,30 @@ a:hover {
 .auth-card .auth-brand span {
   color: var(--soc-accent);
 }
+
+.auth-card .auth-logo {
+  display: block;
+  width: 88px;
+  height: auto;
+  margin: 0 auto 0.85rem;
+}
+.auth-card .auth-owner {
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--soc-muted);
+  margin: -0.1rem 0 0.65rem;
+}
+.soc-navbar .navbar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.soc-navbar .navbar-brand .brand-logo {
+  width: 28px;
+  height: auto;
+  flex-shrink: 0;
+}
+
 .auth-card hr {
   border-color: var(--soc-border);
   opacity: 1;
