@@ -18,13 +18,16 @@ if (-not (Test-Path (Join-Path $Root "dashboard.py"))) {
   $Root = $PSScriptRoot
 }
 $Python = Join-Path $Root ".venv\Scripts\python.exe"
-$App = Join-Path $Root "dashboard.py"
+$Runner = Join-Path $PSScriptRoot "run_always_on.ps1"
 $TaskName = "SOCAssistantDashboard"
 $LogDir = Join-Path $Root "data\logs"
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 
 if (-not (Test-Path $Python)) {
   Write-Error "Missing venv Python at $Python. Run start_dashboard.bat once first."
+}
+if (-not (Test-Path $Runner)) {
+  Write-Error "Missing $Runner"
 }
 
 # Stop any existing listener on 5000 from a manual start
@@ -34,8 +37,9 @@ Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
 
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
 
-$arg = "`"$App`""
-$action = New-ScheduledTaskAction -Execute $Python -Argument $arg -WorkingDirectory $Root
+# Wrapper sets SOC_ALWAYS_ON (no Flask reloader) then runs dashboard.py
+$arg = "-NoProfile -ExecutionPolicy Bypass -File `"$Runner`""
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arg -WorkingDirectory $Root
 if ($AtStartup) {
   $trigger = New-ScheduledTaskTrigger -AtStartup
 } else {

@@ -180,7 +180,12 @@ Double-click `start_dashboard.bat` (or the Desktop shortcut **AI-Powered SOC Ass
 
 ## Keep running on Windows
 
-See [docs/DEPLOY_WINDOWS.md](docs/DEPLOY_WINDOWS.md). Install auto-start:
+See [docs/DEPLOY_WINDOWS.md](docs/DEPLOY_WINDOWS.md).
+
+**While coding:** `scripts/start_dev.ps1` (auto-reload; no restart per file save).  
+**Always-on:** install the scheduled task; after a pull, `scripts/restart_windows_task.ps1` once.
+
+Install auto-start:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install_windows_task.ps1

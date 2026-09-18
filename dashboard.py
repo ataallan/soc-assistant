@@ -1184,5 +1184,19 @@ def cases_update_status(case_id: int):
 # -------------------------------------------------
 # RUN
 # -------------------------------------------------
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # Always-on scheduled task sets SOC_ALWAYS_ON=1 (no debug/reloader).
+    # Dev mode (start_dev.ps1) leaves reloader on so file saves apply without restarts.
+    always_on = _env_bool("SOC_ALWAYS_ON", False)
+    debug = False if always_on else _env_bool("SOC_FLASK_DEBUG", True)
+    use_reloader = False if always_on else _env_bool("SOC_USE_RELOADER", debug)
+    host = os.getenv("SOC_FLASK_HOST", "0.0.0.0")
+    port = int(os.getenv("SOC_FLASK_PORT", "5000"))
+    app.run(host=host, port=port, debug=debug, use_reloader=use_reloader)
