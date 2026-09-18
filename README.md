@@ -194,3 +194,7 @@ Install auto-start:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install_windows_task.ps1
 ```
+
+## Standalone laptop install
+
+Unzip and run [`install_and_run.bat`](install_and_run.bat) — see [docs/STANDALONE.md](docs/STANDALONE.md).
