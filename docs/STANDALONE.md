@@ -14,7 +14,7 @@ Wazuh is **optional**. Without it, login, CSV triage, cases, and UI still work.
 ## Quick start
 
 1. Unzip / copy the folder to the laptop (example: `Desktop\soc_assistant`).
-2. Double-click **`install_and_run.bat`**  
+2. Double-click **`install_and_run.bat`** — it **asks to confirm**, then installs Python packages from `requirements.txt` automatically.  
    or in PowerShell:
 
 ```powershell

@@ -18,6 +18,21 @@ Write-Host ""
 Write-Host "AI-Powered SOC Assistant — standalone install"
 Write-Host "Folder: $PSScriptRoot"
 Write-Host ""
+Write-Host "This will:"
+Write-Host "  1) Check for Python 3"
+Write-Host "  2) Create .venv (if needed)"
+Write-Host "  3) Install packages from requirements.txt"
+Write-Host "  4) Create a local .env (if missing)"
+Write-Host "  5) Start http://127.0.0.1:5000"
+Write-Host ""
+if (-not $env:SOC_INSTALL_ASSUME_YES) {
+  $ans = Read-Host "Install requirements and continue? [Y/n]"
+  if ($ans -and $ans -notmatch '^[Yy]') {
+    Write-Host "Cancelled. Nothing was installed."
+    exit 0
+  }
+}
+Write-Host ""
 
 function Find-Python {
   foreach ($cmd in @("py", "python", "python3")) {
