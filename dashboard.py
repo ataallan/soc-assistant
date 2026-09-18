@@ -180,6 +180,8 @@ def _send_otp_resend(username: str, otp: str, subject: str) -> bool:
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
+            # Cloudflare in front of Resend rejects Python-urllib's default User-Agent (1010)
+            "User-Agent": "MunCyber-SOC-Assistant/1.0",
         },
         method="POST",
     )
