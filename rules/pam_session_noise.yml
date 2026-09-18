@@ -1,0 +1,11 @@
+id: DET-PAM-001
+name: Routine PAM session open/close (low)
+enabled: true
+severity: low
+priority: 90
+mitre: T1078
+conditions:
+  - field: text
+    op: regex
+    value: "(pam_unix|session (opened|closed) for user|systemd-logind.*New session|CRON.*session (opened|closed))"
+explain: "Routine PAM/session open-close on host '{host}' for user '{user}' — usually benign lab noise; suppress further via allowlists suppress_wazuh_rule_ids (e.g. 5501/5502) if still loud."

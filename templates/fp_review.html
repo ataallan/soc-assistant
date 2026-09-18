@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}FP Review{% endblock %}
+
+{% block content %}
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+  <div>
+    <h1 class="page-title">False-Positive Review</h1>
+    <p class="page-subtitle">
+      Top noisy rule ids from the last {{ event_limit }} triage events
+      ({{ event_count }} loaded). Use this to tune
+      <code>config/allowlists.yml</code> and noise YAML rules.
+    </p>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-secondary btn-sm" href="/fp-review?limit=500">Last 500</a>
+    <a class="btn btn-outline-secondary btn-sm" href="/fp-review?limit=1000">Last 1000</a>
+    <a class="btn btn-outline-secondary btn-sm" href="/fp-review?limit=2000">Last 2000</a>
+    <a class="btn btn-outline-primary btn-sm" href="/labels">Labeling</a>
+  </div>
+</div>
+
+<div class="notice-bar mb-3">
+  High <strong>count</strong> with high <strong>% low/ignore</strong> usually means safe suppress candidates.
+  Add Wazuh rule ids under <code>suppress_wazuh_rule_ids</code>, or trusted
+  <code>ips</code> / <code>cidrs</code> / <code>users</code> / <code>hosts</code>.
+  See <code>docs/FALSE_POSITIVES.md</code>.
+</div>
+
+<div class="soc-panel">
+  <h4 class="mb-3" style="font-size:1.05rem;">Noisy rules (by volume)</h4>
+  {% if rows %}
+  <div class="table-scroll">
+    <table class="table table-bordered table-striped mb-0 align-middle">
+      <thead>
+        <tr>
+          <th style="width:12rem;">Rule key</th>
+          <th style="width:6rem;">Count</th>
+          <th style="width:8rem;">Low / ignore</th>
+          <th style="width:6rem;">% low</th>
+          <th>Sample log</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td><code>{{ row.rule_key }}</code></td>
+          <td class="fw-semibold">{{ row.count }}</td>
+          <td>{{ row.low_ignore_count }}</td>
+          <td>
+            {% if row.pct_low_ignore >= 80 %}
+            <span class="badge text-bg-success">{{ row.pct_low_ignore }}%</span>
+            {% elif row.pct_low_ignore >= 50 %}
+            <span class="badge text-bg-warning">{{ row.pct_low_ignore }}%</span>
+            {% else %}
+            <span class="badge text-bg-secondary">{{ row.pct_low_ignore }}%</span>
+            {% endif %}
+          </td>
+          <td style="max-width:520px;white-space:normal;" class="small text-secondary">
+            {{ row.sample_log or '—' }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-secondary mb-0">
+    No triage events yet. Run the CSV or Wazuh watcher, then refresh this page.
+  </p>
+  {% endif %}
+</div>
+
+{% endblock %}

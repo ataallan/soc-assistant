@@ -2,10 +2,10 @@ id: DET-PKG-001
 name: Routine package manager activity (low)
 enabled: true
 severity: low
-priority: 10
+priority: 95
 mitre: T1072
 conditions:
   - field: text
     op: regex
-    value: "(dpkg.*(install|half-configured|configure)|apt(-get)? (install|upgrade)|package .*installed)"
-explain: "Routine package manager activity on host '{host}' — usually lab noise; elevate only if unexpected on a locked host."
+    value: "(dpkg.*(install|half-configured|configure|status|unpack)|apt(-get)? (install|upgrade|update)|package .*installed|wazuh.*290[24])"
+explain: "Routine package manager / dpkg activity on host '{host}' — lab noise; severity stays low/ignore unless unexpected on a locked host."

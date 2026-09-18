@@ -16,6 +16,7 @@ An **AI-assisted SOC triage** toolkit that combines rule-based analysis with a s
 - SOC case / ticket workflow (SLA due times, assignees, My cases / Overdue, external ticket sync) — see [docs/CASES.md](docs/CASES.md)
 - Simple admin/analyst RBAC + session hardening — see [docs/SECURITY.md](docs/SECURITY.md)
 - **Detection Phase A** (normalize → enrich → YAML rules → triage) — see [docs/DETECTION.md](docs/DETECTION.md)
+- **False-positive reduction** (allowlists, noise rules, `/fp-review`) — see [docs/FALSE_POSITIVES.md](docs/FALSE_POSITIVES.md)
 
 
 

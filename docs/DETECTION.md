@@ -57,3 +57,7 @@ pytest tests/test_normalize.py tests/test_enrichment.py tests/test_rules_engine.
 ```
 
 All detection unit tests are offline (no network).
+
+## False positives
+
+Allowlists (`config/allowlists.yml`), noise YAML rules, and the `/fp-review` UI are documented in [FALSE_POSITIVES.md](FALSE_POSITIVES.md).

@@ -1,0 +1,36 @@
+# False-positive / noise allowlists for the detection pipeline.
+# Edit this file (or point ALLOWLIST_PATH at your own copy), then restart
+# the dashboard / CLI watchers so the cache reloads.
+#
+# Matching is case-insensitive for users/hosts. CIDRs use standard notation.
+# When an alert matches, severity is forced to low and recommendation to ignore;
+# YAML rules may still be recorded for explainability, but high escalations are skipped.
+
+# Exact source IPs that are known-benign (scanners, jump boxes, lab controllers).
+# Example: - "203.0.113.10"
+ips: []
+
+# CIDR ranges treated as trusted (lab VLANs, management nets).
+# Example: - "10.0.0.0/8"
+cidrs: []
+
+# Usernames that routinely generate noisy auth/session noise in the lab.
+# Example: - "vagrant"
+users: []
+
+# Host / agent names whose routine activity should stay low/ignore.
+# Example: - "lab-scanner"
+hosts: []
+
+# Wazuh Manager rule ids to suppress (force low/ignore). Optional lab defaults
+# for routine dpkg package noise (Wazuh rules 2902 / 2904). Remove entries if
+# you want those package events to escalate via YAML/keyword rules.
+# Optional PAM session noise: "5501", "5502"
+suppress_wazuh_rule_ids:
+  - "2902"
+  - "2904"
+
+notes: |
+  Lab defaults suppress known-noisy dpkg Wazuh rule ids 2902/2904.
+  Add trusted IPs, CIDRs, service accounts, and hosts as you tune weekly.
+  See docs/FALSE_POSITIVES.md for the analyst loop and /fp-review UI.

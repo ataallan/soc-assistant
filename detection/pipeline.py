@@ -1,9 +1,10 @@
-"""Detection pipeline: normalize → enrich → YAML rules → triage_engine compose."""
+"""Detection pipeline: normalize → enrich → allowlist → YAML rules → triage_engine compose."""
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from detection.allowlists import explain_note, match as allowlist_match
 from detection.enrichment import enrich_alert
 from detection.normalize import normalize_alert
 from rules.engine import evaluate_rules, max_severity
@@ -24,15 +25,22 @@ def process_alert(
     tenant_id: str = "local",
     run_ml: bool = True,
     rules_dir: Optional[Any] = None,
+    allowlist_path: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Run Phase A detection and compose with existing triage_engine.
 
     Returns a result dict including:
       severity, recommendation, rule_severity, matched_rules, enrichment,
-      ml_* assist fields, normalized alert, notes.
+      ml_* assist fields, normalized alert, notes, allowlist match info.
     """
     alert = normalize_alert(raw, tenant_id=tenant_id)
     enrichment, notes = enrich_alert(alert)
+
+    # Allowlist / Wazuh rule-id suppress (after normalize+enrich; before escalation)
+    al_match = allowlist_match(alert, path=allowlist_path)
+    allowlisted = bool(al_match.get("matched"))
+    if allowlisted:
+        notes.append(explain_note(al_match))
 
     yaml_result = evaluate_rules(
         alert,
@@ -82,14 +90,15 @@ def process_alert(
         }
 
     keyword_sev = (triage.get("rule_severity") or triage.get("severity") or "low")
-    # Combined rule severity = max(YAML, keyword rules)
+    # Combined rule severity = max(YAML, keyword rules) — skipped when allowlisted
     candidates = [keyword_sev]
     if yaml_sev:
         candidates.append(yaml_sev)
-    # Asset-aware bump: critical asset + already medium+ → at least high via notes only
-    # (sample YAML rule handles critical asset + high sev explicitly)
 
-    combined_rule_sev = max_severity(candidates)
+    if allowlisted:
+        combined_rule_sev = "low"
+    else:
+        combined_rule_sev = max_severity(candidates)
 
     ml_sev = triage.get("ml_severity")
     ml_conf = triage.get("ml_confidence") or 0.0
@@ -102,23 +111,39 @@ def process_alert(
             resolve_display_severity,
         )
 
-        resolved = resolve_display_severity(
-            combined_rule_sev,
-            ml_sev,
-            ml_conf,
-            threshold=get_ml_confidence_threshold(),
-            assist_only=get_ml_assist_only(),
-        )
-        ml_display = format_ml_assist_display(
-            ml_sev,
-            ml_conf,
-            threshold=get_ml_confidence_threshold(),
-            assist_only=get_ml_assist_only(),
-        )
+        if allowlisted:
+            # Keep ML assist display fields, but never let ML raise severity for allowlisted noise
+            resolved = {
+                "severity": "low",
+                "severity_source": "allowlist",
+                "ml_assist": True,
+                "ml_used_for_display": False,
+                "low_confidence": True,
+            }
+            ml_display = format_ml_assist_display(
+                ml_sev,
+                ml_conf,
+                threshold=get_ml_confidence_threshold(),
+                assist_only=True,
+            )
+        else:
+            resolved = resolve_display_severity(
+                combined_rule_sev,
+                ml_sev,
+                ml_conf,
+                threshold=get_ml_confidence_threshold(),
+                assist_only=get_ml_assist_only(),
+            )
+            ml_display = format_ml_assist_display(
+                ml_sev,
+                ml_conf,
+                threshold=get_ml_confidence_threshold(),
+                assist_only=get_ml_assist_only(),
+            )
     except Exception:
         resolved = {
-            "severity": combined_rule_sev,
-            "severity_source": "rules",
+            "severity": "low" if allowlisted else combined_rule_sev,
+            "severity_source": "allowlist" if allowlisted else "rules",
             "ml_assist": True,
             "ml_used_for_display": False,
             "low_confidence": True,
@@ -132,7 +157,7 @@ def process_alert(
             "ml_severity": None,
         }
 
-    recommendation = _recommendation_for(combined_rule_sev)
+    recommendation = "ignore" if allowlisted else _recommendation_for(combined_rule_sev)
 
     # Prefer extracted fields from normalize; fall back to triage NLP
     ip = alert.get("src_ip") or triage.get("ip")
@@ -143,6 +168,9 @@ def process_alert(
     if matched_rules:
         top_rule_id = matched_rules[0].get("id")
         top_explain = matched_rules[0].get("explain")
+    if allowlisted:
+        al_note = explain_note(al_match)
+        top_explain = f"{al_note}" + (f" | {top_explain}" if top_explain else "")
 
     result = {
         "log": alert.get("raw_message") or triage.get("log") or "",
@@ -152,7 +180,7 @@ def process_alert(
         "file_hash": alert.get("file_hash"),
         "domain": alert.get("domain"),
         "cve": alert.get("cve"),
-        "severity": resolved["severity"],
+        "severity": "low" if allowlisted else resolved["severity"],
         "recommendation": recommendation,
         "rule_based": recommendation,
         "rule_severity": combined_rule_sev,
@@ -161,7 +189,7 @@ def process_alert(
         "ml_severity": ml_sev,
         "ml_prediction": ml_sev,
         "ml_confidence": ml_conf,
-        "severity_source": resolved.get("severity_source") or "rules",
+        "severity_source": resolved.get("severity_source") or ("allowlist" if allowlisted else "rules"),
         "ml_assist": resolved.get("ml_assist", True),
         "ml_display_label": ml_display.get("label"),
         "ml_used_for_display": resolved.get("ml_used_for_display", False),
@@ -171,6 +199,8 @@ def process_alert(
         "rule_explain": top_explain,
         "enrichment": enrichment,
         "enrichment_notes": notes,
+        "allowlisted": allowlisted,
+        "allowlist_reasons": list(al_match.get("reasons") or []),
         "alert": alert,
         "tenant_id": alert.get("tenant_id") or tenant_id,
         "source": alert.get("source"),

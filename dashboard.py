@@ -906,6 +906,33 @@ def notifications():
 
 
 # -------------------------------------------------
+# FALSE-POSITIVE REVIEW (noisy rule aggregation)
+# -------------------------------------------------
+@app.route("/fp-review")
+@login_required
+def fp_review_page():
+    """Show top noisy rule ids from recent triage_events."""
+    from detection.fp_review import aggregate_noisy_rules
+
+    try:
+        limit = int(request.args.get("limit") or 1000)
+    except (TypeError, ValueError):
+        limit = 1000
+    limit = max(100, min(limit, 2000))
+
+    events = list_triage_events(view="total", limit=limit)
+    rows = aggregate_noisy_rules(events, limit_events=limit, top_n=50)
+    return render_template(
+        "fp_review.html",
+        user=session.get("user"),
+        rows=rows,
+        event_limit=limit,
+        event_count=len(events),
+        ml_assist_only=get_ml_assist_only(),
+    )
+
+
+# -------------------------------------------------
 # LABELING (live Wazuh analyst queue)
 # -------------------------------------------------
 @app.route("/labels")

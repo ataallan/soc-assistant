@@ -72,3 +72,72 @@ def test_pipeline_structured_wazuh_keeps_src_ip_user(monkeypatch):
     assert result["alert"]["user"] == "root"
     assert result["ip"] == "203.0.113.44"
     assert result["user"] == "root"
+
+
+def test_pipeline_allowlisted_alert_forced_low_ignore(tmp_path, monkeypatch):
+    """Allowlisted IP → low/ignore even if text would otherwise escalate."""
+    import yaml
+    from detection.allowlists import clear_allowlist_cache
+
+    monkeypatch.setenv("ML_ASSIST_ONLY", "true")
+    monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
+    clear_allowlist_cache()
+    al = tmp_path / "al.yml"
+    al.write_text(
+        yaml.safe_dump(
+            {
+                "ips": ["203.0.113.50"],
+                "cidrs": [],
+                "users": [],
+                "hosts": [],
+                "suppress_wazuh_rule_ids": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = process_alert(
+        {
+            "description": "Possible brute-force attack detected",
+            "event_type": "brute_force",
+            "source_ip": "203.0.113.50",
+            "username": "root",
+        },
+        allowlist_path=al,
+    )
+    assert result["allowlisted"] is True
+    assert result["severity"] == "low"
+    assert result["recommendation"] == "ignore"
+    assert result["severity_source"] == "allowlist"
+    assert result["allowlist_reasons"]
+
+
+def test_pipeline_suppress_wazuh_rule_id(tmp_path, monkeypatch):
+    import yaml
+    from detection.allowlists import clear_allowlist_cache
+
+    monkeypatch.setenv("ML_ASSIST_ONLY", "true")
+    clear_allowlist_cache()
+    al = tmp_path / "al.yml"
+    al.write_text(
+        yaml.safe_dump(
+            {
+                "ips": [],
+                "cidrs": [],
+                "users": [],
+                "hosts": [],
+                "suppress_wazuh_rule_ids": ["2902"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = process_alert(
+        {
+            "rule_id": "2902",
+            "full_log": "dpkg: package foo installed",
+            "agent": {"name": "ubuntu-lab"},
+        },
+        allowlist_path=al,
+    )
+    assert result["allowlisted"] is True
+    assert result["severity"] == "low"
+    assert result["recommendation"] == "ignore"
