@@ -207,3 +207,31 @@ def test_soft_migrate_external_columns(tmp_path, monkeypatch):
     assert updated["external_ticket_id"] == "T-1"
     assert updated["external_system"] == "stub"
     assert updated["external_url"].endswith("/T-1")
+
+
+def test_create_case_blank_ip_user_treated_as_missing(tmp_path, monkeypatch):
+    db_path = _temp_db(tmp_path, monkeypatch)
+    eid = db.insert_triage_event(
+        {
+            "timestamp": "2026-09-17T12:00:00",
+            "log": "generic alert without entities",
+            "severity": "low",
+            "user": "",
+            "ip": "",
+            "rule_based": "ignore",
+        },
+        db_path=db_path,
+        source="test",
+    )
+    case = db.create_case(triage_event_id=eid, db_path=db_path)
+    assert case["ip"] is None
+    assert case["user_entity"] is None
+
+    manual = db.create_case(
+        title="blank entities",
+        ip="   ",
+        user_entity="",
+        db_path=db_path,
+    )
+    assert manual["ip"] is None
+    assert manual["user_entity"] is None

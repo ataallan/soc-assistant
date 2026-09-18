@@ -49,3 +49,26 @@ def test_pipeline_never_crashes_on_none():
     result = process_alert(None)
     assert "severity" in result
     assert "matched_rules" in result
+
+
+def test_pipeline_structured_wazuh_keeps_src_ip_user(monkeypatch):
+    monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
+    monkeypatch.setenv("ML_ASSIST_ONLY", "true")
+    from wazuh_integration import _structure_alert
+
+    raw = {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "agent": {"name": "vpn01", "id": "002"},
+        "rule": {"id": "5503", "level": 10, "description": "Login failed"},
+        "full_log": "sshd: Failed password for root from 203.0.113.44 port 22",
+        "data": {"srcip": "203.0.113.44", "srcuser": "root"},
+    }
+    structured = _structure_alert(raw)
+    assert structured["src_ip"] == "203.0.113.44"
+    assert structured["user"] == "root"
+
+    result = process_alert(structured)
+    assert result["alert"]["src_ip"] == "203.0.113.44"
+    assert result["alert"]["user"] == "root"
+    assert result["ip"] == "203.0.113.44"
+    assert result["user"] == "root"

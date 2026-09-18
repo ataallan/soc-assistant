@@ -73,3 +73,40 @@ def test_extract_items_alternate_keys():
     assert len(_extract_items({"data": {"events": [{"a": 1}]}})) == 1
     assert len(_extract_items({"affected_items": [{"a": 1}]})) == 1
     assert _extract_items({"data": {"affected_items": []}}) == []
+
+
+def test_structure_alert_preserves_src_ip_and_user():
+    item = {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "agent": {"name": "web01", "id": "001", "ip": "10.0.0.8"},
+        "rule": {"id": "5710", "level": 10, "description": "sshd: authentication failed"},
+        "full_log": "sshd: Failed password for invalid user admin from 203.0.113.50 port 22",
+        "data": {"srcip": "203.0.113.50", "srcuser": "admin", "dstip": "10.0.0.8"},
+    }
+    alert = _structure_alert(item)
+    assert alert["src_ip"] == "203.0.113.50"
+    assert alert["dst_ip"] == "10.0.0.8"
+    assert alert["user"] == "admin"
+    assert alert["host"] == "web01"
+    assert alert["agent"] == "web01"
+
+
+def test_structure_alert_win_eventdata_paths():
+    item = {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "agent": {"name": "dc01"},
+        "rule": {"id": "60104", "level": 8, "description": "Windows logon failure"},
+        "full_log": "Logon Failure",
+        "data": {
+            "win": {
+                "eventdata": {
+                    "IpAddress": "198.51.100.20",
+                    "TargetUserName": "jdoe",
+                }
+            }
+        },
+    }
+    alert = _structure_alert(item)
+    assert alert["src_ip"] == "198.51.100.20"
+    assert alert["user"] == "jdoe"
+    assert alert["host"] == "dc01"

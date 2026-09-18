@@ -54,3 +54,27 @@ def test_normalize_none_and_garbage_never_crash():
 def test_normalize_tenant_override():
     alert = normalize_alert("ping", tenant_id="acme")
     assert alert["tenant_id"] == "acme"
+
+
+def test_normalize_full_log_ipv4_and_user_fallback():
+    raw = {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "agent": {"name": "edge01"},
+        "rule": {"id": "5710", "level": 10, "description": "sshd failure"},
+        "full_log": "Failed password for invalid user guest from 198.51.100.7 port 22 ssh2",
+    }
+    alert = normalize_alert(raw)
+    assert alert["src_ip"] == "198.51.100.7"
+    assert alert["user"] == "guest"
+    assert alert["host"] == "edge01"
+
+
+def test_normalize_structured_src_ip_takes_precedence():
+    raw = {
+        "src_ip": "203.0.113.9",
+        "user": "root",
+        "full_log": "Failed password for invalid user decoy from 10.0.0.1 port 22",
+    }
+    alert = normalize_alert(raw)
+    assert alert["src_ip"] == "203.0.113.9"
+    assert alert["user"] == "root"

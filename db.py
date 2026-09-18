@@ -1290,10 +1290,15 @@ def create_case(
                     title = (log_snip[:120] + ("…" if len(log_snip) > 120 else "")) or f"Triage #{event.id}"
                 if summary is None:
                     summary = event.log
-                if ip is None:
+                if ip is None or (isinstance(ip, str) and not ip.strip()):
                     ip = event.ip
-                if user_entity is None:
+                if user_entity is None or (isinstance(user_entity, str) and not str(user_entity).strip()):
                     user_entity = event.user
+                # Blank strings from triage copy are missing, not real entities
+                if isinstance(ip, str) and not ip.strip():
+                    ip = None
+                if isinstance(user_entity, str) and not str(user_entity).strip():
+                    user_entity = None
                 if severity == "medium" and event.severity:
                     ev_sev = (event.severity or "").strip().lower()
                     if ev_sev in VALID_CASE_SEVERITIES:
@@ -1302,6 +1307,10 @@ def create_case(
                     src = "triage"
 
             title_final = (title or "").strip() or "Untitled case"
+            if isinstance(ip, str) and not ip.strip():
+                ip = None
+            if isinstance(user_entity, str) and not str(user_entity).strip():
+                user_entity = None
             now = _utc_now_iso()
             try:
                 from sla import compute_due_at

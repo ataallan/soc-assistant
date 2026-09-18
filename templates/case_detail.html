@@ -40,9 +40,9 @@
         <dt class="col-sm-3 text-secondary">Due at</dt>
         <dd class="col-sm-9 {% if case.is_overdue %}text-danger fw-semibold{% endif %}">{{ case.due_at or '—' }}</dd>
         <dt class="col-sm-3 text-secondary">IP</dt>
-        <dd class="col-sm-9">{{ case.ip or '—' }}</dd>
+        <dd class="col-sm-9">{% if case.ip %}{{ case.ip }}{% else %}<span class="text-secondary">not in alert</span>{% endif %}</dd>
         <dt class="col-sm-3 text-secondary">User</dt>
-        <dd class="col-sm-9">{{ case.user_entity or '—' }}</dd>
+        <dd class="col-sm-9">{% if case.user_entity %}{{ case.user_entity }}{% else %}<span class="text-secondary">not in alert</span>{% endif %}</dd>
         <dt class="col-sm-3 text-secondary">Triage event</dt>
         <dd class="col-sm-9">
           {% if case.triage_event_id %}

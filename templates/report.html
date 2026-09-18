@@ -90,8 +90,8 @@
                               <span class="text-secondary">—</span>
                             {% endif %}
                         </td>
-                        <td>{{ row.user }}</td>
-                        <td>{{ row.ip }}</td>
+                        <td>{% if row.user %}{{ row.user }}{% else %}<span class="text-secondary">not in alert</span>{% endif %}</td>
+                        <td>{% if row.ip %}{{ row.ip }}{% else %}<span class="text-secondary">not in alert</span>{% endif %}</td>
                         <td>
                             {% if row.id %}
                             <form method="POST" action="/cases/create" class="d-inline">

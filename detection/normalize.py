@@ -5,6 +5,7 @@ Never raises on bad input; returns a defensive default structure.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -121,6 +122,43 @@ def _build_raw_message(raw: Dict[str, Any], fields: Dict[str, Any]) -> str:
     return " ".join(bits) if bits else ""
 
 
+_IPV4_RE = re.compile(
+    r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b"
+)
+
+# Conservative auth-log user phrases; avoid matching hostnames or long tokens.
+_USER_PHRASE_RES = (
+    re.compile(r"\binvalid user\s+([A-Za-z0-9._-]{1,64})\b", re.IGNORECASE),
+    re.compile(r"\bfor user\s+([A-Za-z0-9._-]{1,64})\b", re.IGNORECASE),
+    re.compile(
+        r"\bfailed password for (?:invalid user\s+)?([A-Za-z0-9._-]{1,64})\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bAccepted (?:password|publickey) for ([A-Za-z0-9._-]{1,64})\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\buser[=:]\s*([A-Za-z0-9._-]{1,64})\b", re.IGNORECASE),
+)
+
+
+def _ipv4_from_text(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
+    m = _IPV4_RE.search(text)
+    return m.group(0) if m else None
+
+
+def _user_from_text(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
+    for rx in _USER_PHRASE_RES:
+        m = rx.search(text)
+        if m:
+            return m.group(1)
+    return None
+
+
 def normalize_alert(raw: Any, *, tenant_id: str = "local") -> Dict[str, Any]:
     """Convert Wazuh-ish dicts, CSV rows, or plain strings into a stable alert.
 
@@ -185,7 +223,18 @@ def normalize_alert(raw: Any, *, tenant_id: str = "local") -> Dict[str, Any]:
             raw.get("src_ip")
             or raw.get("source_ip")
             or raw.get("srcip")
-            or _dig(raw, "data.srcip", "data.src_ip")
+            or raw.get("attacker_ip")
+            or raw.get("client_ip")
+            or _dig(
+                raw,
+                "data.srcip",
+                "data.src_ip",
+                "data.srcIp",
+                "win.eventdata.ipAddress",
+                "win.eventdata.IpAddress",
+                "data.win.eventdata.ipAddress",
+                "data.win.eventdata.IpAddress",
+            )
             or raw.get("ip")
         )
         out["src_ip"] = _as_str(src_ip)
@@ -194,14 +243,35 @@ def normalize_alert(raw: Any, *, tenant_id: str = "local") -> Dict[str, Any]:
             raw.get("dst_ip")
             or raw.get("destination_ip")
             or raw.get("dstip")
-            or _dig(raw, "data.dstip", "data.dst_ip")
+            or raw.get("dest_ip")
+            or _dig(
+                raw,
+                "data.dstip",
+                "data.dst_ip",
+                "data.dstIp",
+                "win.eventdata.destAddress",
+                "win.eventdata.DestAddress",
+            )
         )
         out["dst_ip"] = _as_str(dst_ip)
 
         user = (
             raw.get("user")
             or raw.get("username")
-            or _dig(raw, "data.srcuser", "data.dstuser", "data.user")
+            or raw.get("srcuser")
+            or raw.get("dstuser")
+            or raw.get("src_user")
+            or _dig(
+                raw,
+                "data.srcuser",
+                "data.dstuser",
+                "data.user",
+                "win.eventdata.targetUserName",
+                "win.eventdata.TargetUserName",
+                "win.eventdata.subjectUserName",
+                "win.eventdata.SubjectUserName",
+                "data.win.eventdata.TargetUserName",
+            )
         )
         out["user"] = _as_str(user)
 
@@ -209,10 +279,11 @@ def normalize_alert(raw: Any, *, tenant_id: str = "local") -> Dict[str, Any]:
             raw.get("host")
             or raw.get("agent")
             or raw.get("hostname")
-            or _dig(raw, "agent.name", "agent.id")
+            or raw.get("agent_name")
+            or _dig(raw, "agent.name", "agent.id", "agent.ip")
         )
         if isinstance(host, dict):
-            host = host.get("name") or host.get("id")
+            host = host.get("name") or host.get("id") or host.get("ip")
         out["host"] = _as_str(host)
 
         mitre = (
@@ -225,6 +296,12 @@ def normalize_alert(raw: Any, *, tenant_id: str = "local") -> Dict[str, Any]:
         out["mitre_technique"] = _as_str(mitre)
 
         out["raw_message"] = _build_raw_message(raw, out)
+
+        # Safe full_log / message regex fallbacks when structured fields missing
+        if not out["src_ip"]:
+            out["src_ip"] = _ipv4_from_text(out.get("raw_message"))
+        if not out["user"]:
+            out["user"] = _user_from_text(out.get("raw_message"))
 
         # Preserve unknown keys lightly (no huge nested dumps)
         known = {
@@ -266,6 +343,14 @@ def normalize_alert(raw: Any, *, tenant_id: str = "local") -> Dict[str, Any]:
             "data",
             "extras",
             "ip",
+            "attacker_ip",
+            "client_ip",
+            "srcuser",
+            "dstuser",
+            "src_user",
+            "dest_ip",
+            "agent_name",
+            "win",
         }
         extras: Dict[str, Any] = {}
         if isinstance(raw.get("extras"), dict):
@@ -284,6 +369,20 @@ def normalize_alert(raw: Any, *, tenant_id: str = "local") -> Dict[str, Any]:
             for dk in ("srcip", "dstip", "srcuser", "dstuser"):
                 if raw["data"].get(dk) is not None:
                     extras.setdefault(dk, raw["data"].get(dk))
+            win_ed = _dig(raw, "data.win.eventdata", "win.eventdata")
+            if isinstance(win_ed, dict):
+                for dk in (
+                    "IpAddress",
+                    "ipAddress",
+                    "TargetUserName",
+                    "targetUserName",
+                    "SubjectUserName",
+                    "subjectUserName",
+                    "DestAddress",
+                    "destAddress",
+                ):
+                    if win_ed.get(dk) is not None:
+                        extras.setdefault(dk, win_ed.get(dk))
         out["extras"] = extras
 
         if not out["timestamp"]:

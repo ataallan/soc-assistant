@@ -132,12 +132,10 @@
             {% if c.is_overdue %}
             <span class="badge text-bg-danger ms-1">OVERDUE</span>
             {% endif %}
-            {% if c.ip or c.user_entity %}
             <div class="small text-secondary">
-              {% if c.ip %}<span class="me-2">IP: {{ c.ip }}</span>{% endif %}
-              {% if c.user_entity %}<span>User: {{ c.user_entity }}</span>{% endif %}
+              <span class="me-2">IP: {% if c.ip %}{{ c.ip }}{% else %}not in alert{% endif %}</span>
+              <span>User: {% if c.user_entity %}{{ c.user_entity }}{% else %}not in alert{% endif %}</span>
             </div>
-            {% endif %}
           </td>
           <td><span class="badge text-bg-secondary">{{ c.status }}</span></td>
           <td>

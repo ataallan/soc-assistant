@@ -170,6 +170,101 @@ def _extract_items(resp_json: Any) -> List[Any]:
     return items or []
 
 
+def _first_nonempty(*values: Any) -> Optional[Any]:
+    for v in values:
+        if v is None:
+            continue
+        if isinstance(v, str) and not v.strip():
+            continue
+        return v
+    return None
+
+
+def _dig_dict(obj: Any, *paths: str) -> Any:
+    """Return first non-empty value for dotted paths within dicts."""
+    for path in paths:
+        cur = obj
+        ok = True
+        for part in path.split("."):
+            if not isinstance(cur, dict) or part not in cur:
+                ok = False
+                break
+            cur = cur[part]
+        if not ok:
+            continue
+        if cur is None or cur == "":
+            continue
+        return cur
+    return None
+
+
+def _derive_alert_entities(it: Dict[str, Any], agent: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    """Preserve/derive canonical src_ip, dst_ip, user, host from Wazuh JSON."""
+    data = it.get("data") if isinstance(it.get("data"), dict) else {}
+
+    src_ip = _first_nonempty(
+        it.get("src_ip"),
+        it.get("srcip"),
+        it.get("source_ip"),
+        data.get("srcip"),
+        data.get("src_ip"),
+        data.get("srcip"),
+        _dig_dict(it, "data.srcip", "data.src_ip", "data.srcip"),
+        _dig_dict(it, "win.eventdata.ipAddress", "win.eventdata.IpAddress"),
+        _dig_dict(data, "win.eventdata.ipAddress", "win.eventdata.IpAddress"),
+        data.get("ipAddress"),
+        data.get("IpAddress"),
+    )
+    dst_ip = _first_nonempty(
+        it.get("dst_ip"),
+        it.get("dstip"),
+        it.get("destination_ip"),
+        data.get("dstip"),
+        data.get("dst_ip"),
+        _dig_dict(it, "data.dstip", "data.dst_ip"),
+        _dig_dict(it, "win.eventdata.destAddress", "win.eventdata.DestAddress"),
+        data.get("destAddress"),
+        data.get("DestAddress"),
+    )
+    user = _first_nonempty(
+        it.get("user"),
+        it.get("username"),
+        data.get("srcuser"),
+        data.get("dstuser"),
+        data.get("user"),
+        _dig_dict(it, "data.srcuser", "data.dstuser", "data.user"),
+        _dig_dict(it, "win.eventdata.targetUserName", "win.eventdata.TargetUserName",
+                  "win.eventdata.subjectUserName", "win.eventdata.SubjectUserName"),
+        _dig_dict(data, "win.eventdata.targetUserName", "win.eventdata.TargetUserName",
+                  "win.eventdata.subjectUserName", "win.eventdata.SubjectUserName"),
+        data.get("targetUserName"),
+        data.get("TargetUserName"),
+        data.get("subjectUserName"),
+        data.get("SubjectUserName"),
+    )
+    host = _first_nonempty(
+        it.get("host"),
+        it.get("hostname"),
+        agent.get("name"),
+        agent.get("id"),
+        agent.get("ip"),
+        _dig_dict(it, "agent.name", "agent.id"),
+    )
+
+    def _as_opt_str(v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+    return {
+        "src_ip": _as_opt_str(src_ip),
+        "dst_ip": _as_opt_str(dst_ip),
+        "user": _as_opt_str(user),
+        "host": _as_opt_str(host),
+    }
+
+
 def _structure_alert(it: Any) -> Dict[str, Any]:
     if not isinstance(it, dict):
         text = str(it)
@@ -182,6 +277,10 @@ def _structure_alert(it: Any) -> Dict[str, Any]:
             "severity": "low",
             "full_log": text,
             "summary": text,
+            "src_ip": None,
+            "dst_ip": None,
+            "user": None,
+            "host": None,
         }
 
     rule = it.get("rule") if isinstance(it.get("rule"), dict) else {}
@@ -191,6 +290,7 @@ def _structure_alert(it: Any) -> Dict[str, Any]:
     agent_name = agent.get("name") or agent.get("id")
     full_log = it.get("full_log") or it.get("raw") or it.get("full_log_plain") or ""
     timestamp = it.get("timestamp")
+    entities = _derive_alert_entities(it, agent)
 
     pieces = [p for p in [timestamp, agent_name, desc, full_log] if p]
     summary = " | ".join(str(p) for p in pieces) if pieces else str(it)
@@ -204,6 +304,10 @@ def _structure_alert(it: Any) -> Dict[str, Any]:
         "severity": wazuh_level_to_severity(level),
         "full_log": full_log or summary,
         "summary": summary,
+        "src_ip": entities["src_ip"],
+        "dst_ip": entities["dst_ip"],
+        "user": entities["user"],
+        "host": entities["host"] or (str(agent_name).strip() if agent_name else None),
     }
 
 
@@ -212,7 +316,8 @@ def _parse_alerts_structured(resp_json: Any) -> List[Dict[str, Any]]:
     if not items:
         return [{"timestamp": None, "agent": None, "rule_id": None, "rule_level": None,
                  "rule_description": None, "severity": "low", "full_log": str(resp_json),
-                 "summary": str(resp_json)}]
+                 "summary": str(resp_json), "src_ip": None, "dst_ip": None,
+                 "user": None, "host": None}]
     return [_structure_alert(it) for it in items]
 
 
