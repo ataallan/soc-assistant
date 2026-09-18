@@ -5,6 +5,7 @@ import threading
 import pandas as pd
 import os
 import random
+import secrets
 import time
 from functools import wraps
 from dotenv import load_dotenv
@@ -138,26 +139,93 @@ app.config['MAIL_DEFAULT_SENDER'] = app.config['MAIL_USERNAME'] or 'noreply@loca
 mail = Mail(app)
 
 
+def resend_configured() -> bool:
+    return bool((os.environ.get("RESEND_API_KEY") or "").strip())
+
+
 def mail_configured() -> bool:
-    return bool(app.config['MAIL_USERNAME'] and app.config['MAIL_PASSWORD'])
+    """True when any email OTP channel is configured (Resend preferred, else Gmail SMTP)."""
+    return resend_configured() or bool(app.config['MAIL_USERNAME'] and app.config['MAIL_PASSWORD'])
 
 
-def deliver_otp(username: str, otp: str, subject: str = "Your Verification Code") -> str:
-    """Send OTP by email when configured; otherwise print + return code for local demo UI."""
+def _send_otp_resend(username: str, otp: str, subject: str) -> bool:
+    """Send OTP via Resend API (same provider as muncyber.com). Returns True on success."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    api_key = (os.environ.get("RESEND_API_KEY") or "").strip()
+    if not api_key:
+        return False
+    from_addr = (os.environ.get("RESEND_FROM") or "Mun Cyber Technologies <info@muncyber.com>").strip()
+    body = (
+        f"Your AI-Powered SOC Assistant verification code is: {otp}\n\n"
+        f"It expires in 5 minutes. If you did not try to sign in, ignore this email."
+    )
+    html = (
+        f"<p>Your AI-Powered SOC Assistant verification code is:</p>"
+        f"<p style=\"font-size:24px;font-weight:700;letter-spacing:4px\">{otp}</p>"
+        f"<p>It expires in 5 minutes. If you did not try to sign in, ignore this email.</p>"
+    )
+    payload = json.dumps({
+        "from": from_addr,
+        "to": [username],
+        "subject": subject,
+        "text": body,
+        "html": html,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            if 200 <= resp.status < 300:
+                print(f"OTP emailed via Resend to {username}")
+                return True
+            print(f"Resend OTP unexpected status {resp.status}")
+            return False
+    except urllib.error.HTTPError as err:
+        detail = err.read().decode("utf-8", errors="replace")[:300]
+        print(f"Resend OTP failed: {err.code} {detail}")
+        return False
+    except Exception as err:
+        print(f"Resend OTP error: {err}")
+        return False
+
+
+def deliver_otp(username: str, otp: str, subject: str = "Your Verification Code") -> bool:
+    """Email the OTP. Never returns the code for on-page display (email only).
+
+    Order: Resend (preferred, same as muncyber.com) → Flask-Mail SMTP → console log only.
+    Returns True if an email was sent, False if only logged locally.
+    """
     body = f"Your verification code is: {otp}. It expires in 5 minutes."
-    if mail_configured():
-        msg = Message(
-            subject,
-            sender=app.config['MAIL_USERNAME'],
-            recipients=[username],
-        )
-        msg.body = body
-        mail.send(msg)
-        print(f"OTP emailed to {username}")
-        return ""
-    # Local / Capstone demo fallback — no crash when .env mail is empty
-    print(f"[DEMO OTP] user={username} code={otp} (MAIL_USERNAME/MAIL_PASSWORD not set in .env)")
-    return otp
+    if resend_configured():
+        if _send_otp_resend(username, otp, subject):
+            return True
+        print("Resend failed; trying SMTP fallback if configured")
+    if app.config['MAIL_USERNAME'] and app.config['MAIL_PASSWORD']:
+        try:
+            msg = Message(
+                subject,
+                sender=app.config['MAIL_USERNAME'],
+                recipients=[username],
+            )
+            msg.body = body
+            mail.send(msg)
+            print(f"OTP emailed via SMTP to {username}")
+            return True
+        except Exception as err:
+            print(f"SMTP OTP failed: {err}")
+    # Local fallback: log to server console only — never show on the website
+    print(f"[OTP not emailed] user={username} code={otp} (set RESEND_API_KEY or MAIL_* in .env)")
+    return False
 
 # -------------------------------------------------
 # USER DATABASE
@@ -339,15 +407,16 @@ def login():
             return render_template("login.html", error="Invalid username or password")
 
         # Generate OTP
-        otp = str(random.randint(100000, 999999))
+        otp = f"{secrets.randbelow(1_000_000):06d}"
 
         # Save OTP temporarily
         session["pending_user"] = username
         session["otp"] = otp
         session["otp_time"] = time.time()
 
-        demo_otp = deliver_otp(username, otp)
-        session["demo_otp"] = demo_otp  # shown on /2fa only when mail is not configured
+        emailed = deliver_otp(username, otp)
+        session["otp_emailed"] = bool(emailed)
+        session.pop("demo_otp", None)  # never show codes in the browser
         return redirect("/2fa")
 
     return render_template("login.html")
@@ -366,7 +435,7 @@ def two_factor():
             session.pop("pending_user", None)
             session.pop("otp", None)
             session.pop("otp_time", None)
-            return render_template("2fa.html", error="Code expired. Please login again.", demo_otp="")
+            return render_template("2fa.html", error="Code expired. Please login again.", otp_emailed=False)
 
         if code == session.get("otp"):
             username = session["pending_user"]
@@ -376,17 +445,18 @@ def two_factor():
             session.pop("otp", None)
             session.pop("otp_time", None)
             session.pop("demo_otp", None)
+            session.pop("otp_emailed", None)
             return redirect("/")
 
         return render_template(
             "2fa.html",
             error="Invalid code",
-            demo_otp=session.get("demo_otp") or "",
+            otp_emailed=bool(session.get("otp_emailed")),
         )
 
     return render_template(
         "2fa.html",
-        demo_otp=session.get("demo_otp") or "",
+        otp_emailed=bool(session.get("otp_emailed")),
     )
 
 
@@ -399,14 +469,18 @@ def resend_otp():
     username = session["pending_user"]
 
     # Generate new OTP
-    otp = str(random.randint(100000, 999999))
+    otp = f"{secrets.randbelow(1_000_000):06d}"
     session["otp"] = otp
     session["otp_time"] = time.time()
 
-    demo_otp = deliver_otp(username, otp, subject="Your New Verification Code")
-    session["demo_otp"] = demo_otp
-    msg = "A new code has been sent to your email." if mail_configured() else "A new verification code is shown below."
-    return render_template("2fa.html", message=msg, demo_otp=demo_otp)
+    emailed = deliver_otp(username, otp, subject="Your New Verification Code")
+    session["otp_emailed"] = bool(emailed)
+    session.pop("demo_otp", None)
+    if emailed:
+        msg = "A new code has been sent to your email."
+    else:
+        msg = "Email delivery is not configured. Ask your admin to set RESEND_API_KEY (or check the server log)."
+    return render_template("2fa.html", message=msg, otp_emailed=bool(emailed))
 
 @app.route("/logout")
 def logout():

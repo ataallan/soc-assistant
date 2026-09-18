@@ -120,3 +120,7 @@ Point to repo: https://github.com/ataallan/soc-assistant
 6. End card with GitHub URL (10s)
 
 Save captures under `docs/screenshots/` using the names in `docs/screenshots/README.md`.
+
+## Email verification (login OTP)
+
+Prefer `RESEND_API_KEY` (same Resend account as muncyber.com). Codes are emailed and **never shown in the browser**. Optional fallback: `MAIL_USERNAME` / `MAIL_PASSWORD` (Gmail SMTP). Without either, the code is logged on the server console only for local debugging.

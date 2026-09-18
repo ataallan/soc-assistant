@@ -15,14 +15,7 @@
         <div class="auth-brand">AI-Powered <span>SOC Assistant</span></div>
         <div class="auth-owner">Mun Cyber Technologies</div>
         <hr>
-        <h3>Verify Code</h3>
-
-        {% if demo_otp %}
-        <div class="alert alert-info" role="status">
-          <strong>Verification code:</strong> <code>{{ demo_otp }}</code>
-          <div class="small mt-1">Email delivery is unavailable in this environment, so your code is shown here.</div>
-        </div>
-        {% endif %}
+        <h3>Check your email</h3>
 
         {% if error %}
         <div class="alert alert-danger alert-dismissible fade show" role="alert">
@@ -39,13 +32,17 @@
         {% endif %}
 
         <p class="text-center text-secondary" style="font-size:0.9rem;">
-            A 6-digit verification code was sent to your email.
+            {% if otp_emailed %}
+            A 6-digit verification code was sent to your email. It expires in 5 minutes.
+            {% else %}
+            Enter the 6-digit verification code from your email (expires in 5 minutes).
+            {% endif %}
         </p>
 
         <form method="POST">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-            <input name="code" class="form-control mb-3" placeholder="Enter code" required autocomplete="one-time-code">
+            <input name="code" class="form-control mb-3" placeholder="Enter code" required autocomplete="one-time-code" inputmode="numeric" maxlength="6">
             <button class="btn btn-primary w-100">Verify</button>
         </form>
 
