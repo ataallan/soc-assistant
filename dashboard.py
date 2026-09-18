@@ -1,4 +1,5 @@
-from flask import Flask, render_template, request, jsonify, redirect, session, send_file
+from flask import Flask, render_template, request, jsonify, redirect, session, send_file, g
+from urllib.parse import urlparse
 from werkzeug.security import generate_password_hash, check_password_hash
 import threading
 import pandas as pd
@@ -10,7 +11,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from flask_wtf.csrf import CSRFProtect
+
 from containment import get_mode, get_mode_label, get_ui_notice, load_blocked
+from rbac import ROLE_ADMIN, role_for_identity
 from report_filters import (
     compute_alert_counts,
     filter_report_df,
@@ -91,6 +95,17 @@ except Exception:
 app = Flask(__name__, template_folder="templates")
 app.secret_key = os.environ.get("SECRET_KEY", "dev-only-change-me")
 
+# Session cookie hardening (HttpOnly is Flask default True; keep explicit)
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+# Set SESSION_COOKIE_SECURE=true behind HTTPS (see docs/SECURITY.md)
+_secure = (os.environ.get("SESSION_COOKIE_SECURE") or "").strip().lower()
+app.config["SESSION_COOKIE_SECURE"] = _secure in ("1", "true", "yes", "on")
+
+# CSRF for POST forms + JSON (X-CSRFToken header). Disable in unit tests via TESTING.
+app.config["WTF_CSRF_HEADERS"] = ["X-CSRFToken", "X-CSRF-Token"]
+csrf = CSRFProtect(app)
+
 # -------------------------------------------------
 # EMAIL CONFIG
 # -------------------------------------------------
@@ -149,15 +164,111 @@ def save_user(username, password_hash):
 ensure_db_ready()
 
 # -------------------------------------------------
-# LOGIN REQUIRED
+# RBAC + LOGIN
 # -------------------------------------------------
+def _wants_json() -> bool:
+    return bool(
+        request.is_json
+        or request.accept_mimetypes.best == "application/json"
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or request.args.get("format") == "json"
+    )
+
+
+def current_role() -> str:
+    """Recompute role from the logged-in email/username each call."""
+    return role_for_identity(session.get("user"))
+
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if "user" not in session:
             return redirect("/login")
+        # Keep session role in sync (email list may change without re-login)
+        session["role"] = current_role()
         return f(*args, **kwargs)
     return decorated
+
+
+def _safe_internal_redirect(fallback: str = "/"):
+    """Prefer same-host referrer path; never redirect off-site."""
+    ref = request.referrer
+    if not ref:
+        return fallback
+    try:
+        parsed = urlparse(ref)
+        if parsed.netloc and parsed.netloc != request.host:
+            return fallback
+        path = parsed.path or fallback
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        return path
+    except Exception:
+        return fallback
+
+
+def require_admin(f):
+    """Block analysts from admin-only actions (403 JSON or redirect + toast)."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if "user" not in session:
+            return redirect("/login")
+        session["role"] = current_role()
+        if current_role() != ROLE_ADMIN:
+            msg = "Admin role required for this action."
+            if _wants_json():
+                return jsonify({"ok": False, "status": "Forbidden", "message": msg}), 403
+            session["auth_flash"] = {"ok": False, "message": msg}
+            return redirect(_safe_internal_redirect("/"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def _deny_stub_containment_if_analyst():
+    """Live stub containment execute is admin-only; analysts may still view blocks."""
+    if get_mode() != "stub":
+        return None
+    if current_role() == ROLE_ADMIN:
+        return None
+    msg = "Admin role required to execute containment in stub mode."
+    if _wants_json():
+        return jsonify({"ok": False, "status": "Forbidden", "message": msg}), 403
+    session["auth_flash"] = {"ok": False, "message": msg}
+    return redirect("/blocks")
+
+
+@app.before_request
+def _sync_role_on_request():
+    if "user" in session:
+        session["role"] = current_role()
+        g.current_role = session["role"]
+        g.is_admin = session["role"] == ROLE_ADMIN
+    else:
+        g.current_role = None
+        g.is_admin = False
+
+
+@app.context_processor
+def inject_rbac_context():
+    role = current_role() if "user" in session else None
+    flash = session.pop("auth_flash", None)
+    return {
+        "session_user": session.get("user"),
+        "current_user_role": role,
+        "is_admin": role == ROLE_ADMIN,
+        "auth_flash": flash,
+        "containment_mode": get_mode(),
+    }
+
+
+@app.after_request
+def set_security_headers(response):
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    return response
+
 
 # -------------------------------------------------
 # AUTH
@@ -213,7 +324,9 @@ def two_factor():
             return render_template("2fa.html", error="Code expired. Please login again.", demo_otp="")
 
         if code == session.get("otp"):
-            session["user"] = session["pending_user"]
+            username = session["pending_user"]
+            session["user"] = username
+            session["role"] = role_for_identity(username)
             session.pop("pending_user", None)
             session.pop("otp", None)
             session.pop("otp_time", None)
@@ -253,6 +366,7 @@ def resend_otp():
 @app.route("/logout")
 def logout():
     session.pop("user", None)
+    session.pop("role", None)
     return redirect("/login")
 
 # -------------------------------------------------
@@ -273,6 +387,7 @@ def home():
 # -------------------------------------------------
 @app.route("/train-model", methods=["POST"])
 @login_required
+@require_admin
 def train_model_route():
     metrics = train_ml_model("data/sample_logs.csv", combine_labeled=True)
     if not metrics:
@@ -430,29 +545,41 @@ def view_blocks():
     blocks = load_blocked()
     blocked_entities.clear()
     blocked_entities.update(blocks)
+    mode = get_mode()
+    can_execute = (current_role() == ROLE_ADMIN) or (mode != "stub")
     return render_template(
         "blocks.html",
         blocks=blocks,
-        containment_mode=get_mode(),
+        containment_mode=mode,
         containment_label=get_mode_label(),
         containment_notice=get_ui_notice(),
+        can_execute_containment=can_execute,
     )
 
 @app.route("/block/ip", methods=["POST"])
 @login_required
 def block_ip():
+    denied = _deny_stub_containment_if_analyst()
+    if denied is not None:
+        return denied
     execute_block_ip(request.form["ip"])
     return redirect("/blocks")
 
 @app.route("/block/user", methods=["POST"])
 @login_required
 def block_user():
+    denied = _deny_stub_containment_if_analyst()
+    if denied is not None:
+        return denied
     execute_block_user(request.form["user"])
     return redirect("/blocks")
 
 @app.route("/unblock", methods=["POST"])
 @login_required
 def unblock():
+    denied = _deny_stub_containment_if_analyst()
+    if denied is not None:
+        return denied
     target = request.form["target"]
 
     if target in blocked_entities["ips"]:
@@ -525,7 +652,7 @@ def health_page():
         user=session.get("user"),
         health=health,
         flash=flash,
-        can_backup=health["storage"]["backend"] == "sqlite",
+        can_backup=(health["storage"]["backend"] == "sqlite" and current_role() == ROLE_ADMIN),
     )
 
 
@@ -537,6 +664,7 @@ def health_json():
 
 @app.route("/backup", methods=["POST"])
 @login_required
+@require_admin
 def backup_route():
     result = backup_sqlite(dest_dir="data/backups", keep=10)
     wants_json = (
@@ -700,6 +828,7 @@ def labels_skip():
 
 @app.route("/labels/retrain", methods=["POST"])
 @login_required
+@require_admin
 def labels_retrain():
     """Retrain on sample_logs.csv + labeled_alerts.csv; return metrics toast/JSON."""
     try:
@@ -743,15 +872,6 @@ def labels_retrain():
 # -------------------------------------------------
 # CASES (lightweight SOC ticket workflow)
 # -------------------------------------------------
-def _wants_json() -> bool:
-    return bool(
-        request.is_json
-        or request.accept_mimetypes.best == "application/json"
-        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
-        or request.args.get("format") == "json"
-    )
-
-
 @app.route("/cases")
 @login_required
 def cases_page():

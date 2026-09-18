@@ -14,6 +14,7 @@ An **AI-assisted SOC triage** toolkit that combines rule-based analysis with a s
 - Flexible DB persistence (SQLite by default; optional PostgreSQL) for triage, blocks, and audit (CSV export available)
 - Analyst labeling template — see [docs/LABELING.md](docs/LABELING.md)
 - SOC case / ticket workflow (open from triage, notes, status, assignee) — see [docs/CASES.md](docs/CASES.md)
+- Simple admin/analyst RBAC + session hardening — see [docs/SECURITY.md](docs/SECURITY.md)
 
 
 
@@ -51,7 +52,7 @@ copy .env.example .env   # Windows
 # cp .env.example .env   # macOS / Linux
 ```
 
-Edit `.env` and set `SECRET_KEY`, mail credentials, `SOC_DB_PATH` (optional; default `data/soc_assistant.db`), and (optionally) `SOC_DATABASE_URL` / `DATABASE_URL` for PostgreSQL, plus Wazuh values. **Never commit `.env` or `*.db`.**
+Edit `.env` and set `SECRET_KEY`, `SOC_ADMIN_EMAILS`, mail credentials, `SOC_DB_PATH` (optional; default `data/soc_assistant.db`), and (optionally) `SOC_DATABASE_URL` / `DATABASE_URL` for PostgreSQL, plus Wazuh values. **Never commit `.env` or `*.db`.**
 
 Runtime triage and containment state lives in **SQLite by default** (optional PostgreSQL). See [docs/STORAGE.md](docs/STORAGE.md).
 

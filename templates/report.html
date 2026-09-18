@@ -84,6 +84,8 @@
                         <td>
                             {% if row.id %}
                             <form method="POST" action="/cases/create" class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
                               <input type="hidden" name="triage_event_id" value="{{ row.id }}">
                               <input type="hidden" name="source" value="triage">
                               <button type="submit" class="btn btn-sm btn-outline-primary">Open case</button>

@@ -50,6 +50,8 @@
   <div class="soc-panel">
     <h4 class="mb-3" style="font-size:1.05rem;">Create case</h4>
     <form method="POST" action="/cases/create" class="row g-2">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
       <div class="col-md-6">
         <label class="form-label small text-secondary">Title</label>
         <input type="text" name="title" class="form-control form-control-sm" required placeholder="Short case title">

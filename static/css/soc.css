@@ -835,3 +835,27 @@ code {
   background: rgba(59, 130, 246, 0.12);
   color: var(--soc-accent) !important;
 }
+
+/* Role chip (admin / analyst) */
+.role-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.22rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px solid var(--soc-border);
+  line-height: 1.2;
+}
+.role-chip.role-admin {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(251, 191, 36, 0.35);
+}
+.role-chip.role-analyst {
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.35);
+}

@@ -75,6 +75,8 @@
       <p class="text-secondary small">No notes yet.</p>
       {% endif %}
       <form method="POST" action="/cases/{{ case.id }}/note">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
         <label class="form-label small text-secondary">Add note</label>
         <textarea name="body" class="form-control form-control-sm mb-2" rows="3" required placeholder="Investigation update…"></textarea>
         <button type="submit" class="btn btn-sm btn-outline-primary">Save note</button>
@@ -86,6 +88,8 @@
     <div class="soc-panel mb-3">
       <h4 class="mb-3" style="font-size:1.05rem;">Update status</h4>
       <form method="POST" action="/cases/{{ case.id }}/status" class="d-grid gap-2">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
         <div>
           <label class="form-label small text-secondary">Status</label>
           <select name="status" class="form-select form-select-sm">
@@ -107,6 +111,8 @@
       <div class="d-flex flex-wrap gap-1 mt-3">
         {% for s in ['open', 'investigating', 'contained', 'closed'] %}
         <form method="POST" action="/cases/{{ case.id }}/status" class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
           <input type="hidden" name="status" value="{{ s }}">
           <button type="submit" class="btn btn-sm {% if case.status == s %}btn-primary{% else %}btn-outline-secondary{% endif %}" {% if case.status == s %}disabled{% endif %}>
             {{ s }}

@@ -8,12 +8,21 @@
     async function handleForm(event, endpoint) {
         event.preventDefault();
         try {
-            const res = await fetch(endpoint, { method: "POST" });
-            const data = await res.json();
+            const headers = (typeof csrfHeaders === "function")
+                ? csrfHeaders({ "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" })
+                : { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" };
+            const res = await fetch(endpoint, { method: "POST", headers });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                const msg = data.message || data.status || "Request denied";
+                if (typeof showToast === "function") showToast(msg, "error");
+                else alert(msg);
+                return;
+            }
             if (typeof showToast === "function") {
-                showToast(data.status || "OK", "success");
+                showToast(data.status || data.message || "OK", "success");
             } else {
-                alert(data.status);
+                alert(data.status || "OK");
             }
             updateStatus();
         } catch (err) {
@@ -125,25 +134,36 @@
 
 <!-- Ops control bar -->
 <div class="ops-bar mb-4">
+    {% if is_admin %}
     <div class="ops-group">
         <span class="ops-label">Train</span>
         <form onsubmit="handleForm(event, '/train-model')" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-sm btn-success">
                 Train model
                 <span id="status-ml" class="status-indicator status-idle ms-1">Idle</span>
             </button>
         </form>
     </div>
-
     <div class="ops-divider d-none d-md-block"></div>
+    {% else %}
+    <div class="ops-group">
+        <span class="ops-label">Train</span>
+        <span class="text-secondary small">Admin only</span>
+        <span id="status-ml" class="status-indicator status-idle ms-1 d-none">Idle</span>
+    </div>
+    <div class="ops-divider d-none d-md-block"></div>
+    {% endif %}
 
     <div class="ops-group">
         <span class="ops-label">Wazuh</span>
         <span id="status-wazuh" class="status-indicator status-stopped">Stopped</span>
         <form onsubmit="handleForm(event, '/watch-wazuh/start')" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-sm btn-primary">Start</button>
         </form>
         <form onsubmit="handleForm(event, '/watch-wazuh/stop')" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-sm btn-outline-danger">Stop</button>
         </form>
     </div>
@@ -154,9 +174,11 @@
         <span class="ops-label">CSV</span>
         <span id="status-csv" class="status-indicator status-stopped">Stopped</span>
         <form onsubmit="handleForm(event, '/watch-csv/start')" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-sm btn-warning">Start</button>
         </form>
         <form onsubmit="handleForm(event, '/watch-csv/stop')" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-sm btn-outline-danger">Stop</button>
         </form>
     </div>

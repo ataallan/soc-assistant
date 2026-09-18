@@ -37,6 +37,7 @@ def app_client(tmp_path, monkeypatch):
 
     importlib.reload(dashboard)
     dashboard.app.config["TESTING"] = True
+    dashboard.app.config["WTF_CSRF_ENABLED"] = False
     client = dashboard.app.test_client()
     return client, dashboard
 

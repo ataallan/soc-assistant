@@ -13,6 +13,9 @@
 
 <div class="notice-bar">
   {{ containment_notice or "Containment actions are recorded in this console for demonstration. They do not change production network controls." }}
+  {% if containment_mode == "stub" and not can_execute_containment %}
+  <div class="mt-2 small text-warning">Stub-mode execute is admin-only. Analysts can view the list and open cases.</div>
+  {% endif %}
 </div>
 
 <div class="row g-3">
@@ -24,20 +27,28 @@
           {% for ip in blocks.ips %}
           <li class="list-group-item d-flex justify-content-between align-items-center">
             <code>{{ ip }}</code>
+            {% if can_execute_containment %}
             <form method="POST" action="/unblock" class="m-0">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="target" value="{{ ip }}">
               <button class="btn btn-outline-danger btn-sm">Unblock</button>
             </form>
+            {% endif %}
           </li>
           {% else %}
           <li class="list-group-item text-secondary">No blocked IP addresses</li>
           {% endfor %}
         </ul>
       </div>
+      {% if can_execute_containment %}
       <form method="POST" action="/block/ip" class="d-flex gap-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="text" name="ip" class="form-control" placeholder="IP address" required>
         <button class="btn btn-primary">Block IP</button>
       </form>
+      {% else %}
+      <p class="text-secondary small mb-0">View only — stub containment execute requires admin.</p>
+      {% endif %}
     </div>
   </div>
 
@@ -49,20 +60,26 @@
           {% for user in blocks.users %}
           <li class="list-group-item d-flex justify-content-between align-items-center">
             <span>{{ user }}</span>
+            {% if can_execute_containment %}
             <form method="POST" action="/unblock" class="m-0">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="target" value="{{ user }}">
               <button class="btn btn-outline-danger btn-sm">Unblock</button>
             </form>
+            {% endif %}
           </li>
           {% else %}
           <li class="list-group-item text-secondary">No blocked user accounts</li>
           {% endfor %}
         </ul>
       </div>
+      {% if can_execute_containment %}
       <form method="POST" action="/block/user" class="d-flex gap-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="text" name="user" class="form-control" placeholder="Username" required>
         <button class="btn btn-primary">Block user</button>
       </form>
+      {% endif %}
     </div>
   </div>
 </div>
