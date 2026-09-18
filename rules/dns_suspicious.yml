@@ -1,0 +1,11 @@
+id: DET-DNS-001
+name: DNS suspicious keywords
+enabled: true
+severity: medium
+priority: 70
+mitre: T1071.004
+conditions:
+  - field: text
+    op: regex
+    value: "(dns query|suspicious domain|dga|nxdomain flood|dns tunneling|query blocked|malicious domain|dns exfiltration)"
+explain: "Suspicious DNS activity indicators for host '{host}' — rule {rule_id}; review queried domain when present."

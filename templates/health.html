@@ -87,6 +87,29 @@
           Unable to authenticate right now.
           {% endif %}
         </dd>
+        {% if health.wazuh.ingest %}
+        <dt class="col-5 text-secondary">Alert source</dt>
+        <dd class="col-7">
+          <code>{{ health.wazuh.ingest.preferred }}</code>
+          {% if health.wazuh.ingest.last_source %}
+          <span class="text-secondary">(last: {{ health.wazuh.ingest.last_source }})</span>
+          {% endif %}
+        </dd>
+        <dt class="col-5 text-secondary">Indexer</dt>
+        <dd class="col-7 small text-secondary">
+          {% if health.wazuh.ingest.indexer_configured %}
+          configured @ <code>{{ health.wazuh.ingest.indexer_host }}</code>
+          / <code>{{ health.wazuh.ingest.indexer_index }}</code>
+          {% if health.wazuh.ingest.indexer_via_wsl %} (via WSL){% endif %}
+          {% else %}
+          not configured — set WAZUH_INDEXER_PASS (and VIA_WSL=true on Windows)
+          {% endif %}
+          {% if health.wazuh.ingest.indexer_error %}
+          <div class="text-warning">{{ health.wazuh.ingest.indexer_error }}</div>
+          {% endif %}
+          <div class="mt-1">{{ health.wazuh.ingest.note }}</div>
+        </dd>
+        {% endif %}
       </dl>
     </div>
   </div>

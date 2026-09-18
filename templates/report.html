@@ -49,6 +49,7 @@
                         <th>Detection</th>
                         <th>User</th>
                         <th>IP</th>
+                        <th>Host</th>
                         <th>Case</th>
                     </tr>
                 </thead>
@@ -92,6 +93,15 @@
                         </td>
                         <td>{% if row.user %}{{ row.user }}{% else %}<span class="text-secondary">not in alert</span>{% endif %}</td>
                         <td>{% if row.ip %}{{ row.ip }}{% else %}<span class="text-secondary">not in alert</span>{% endif %}</td>
+                        <td>{% if row.host %}{{ row.host }}{% else %}<span class="text-secondary">not in alert</span>{% endif %}
+                          {% if row.file_hash or row.domain or row.cve %}
+                          <div class="small text-secondary">
+                            {% if row.file_hash %}<div>Hash: {{ row.file_hash[:16] }}…</div>{% endif %}
+                            {% if row.domain %}<div>Domain: {{ row.domain }}</div>{% endif %}
+                            {% if row.cve %}<div>CVE: {{ row.cve }}</div>{% endif %}
+                          </div>
+                          {% endif %}
+                        </td>
                         <td>
                             {% if row.id %}
                             <form method="POST" action="/cases/create" class="d-inline">

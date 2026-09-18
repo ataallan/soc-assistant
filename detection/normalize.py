@@ -22,6 +22,9 @@ STABLE_FIELDS = (
     "dst_ip",
     "user",
     "host",
+    "file_hash",
+    "domain",
+    "cve",
     "mitre_technique",
     "raw_message",
     "extras",
@@ -41,6 +44,9 @@ def _blank_alert() -> Dict[str, Any]:
         "dst_ip": None,
         "user": None,
         "host": None,
+        "file_hash": None,
+        "domain": None,
+        "cve": None,
         "mitre_technique": None,
         "raw_message": "",
         "extras": {},
@@ -156,6 +162,100 @@ def _user_from_text(text: Optional[str]) -> Optional[str]:
         m = rx.search(text)
         if m:
             return m.group(1)
+    return None
+
+
+
+_CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,}\b", re.IGNORECASE)
+
+
+def _extract_file_hash(raw: Dict[str, Any]) -> Optional[str]:
+    """Pull md5/sha1/sha256 from syscheck / data / top-level Wazuh fields."""
+    direct = _as_str(
+        raw.get("file_hash")
+        or raw.get("md5")
+        or raw.get("sha1")
+        or raw.get("sha256")
+        or _dig(
+            raw,
+            "syscheck.sha256",
+            "syscheck.md5",
+            "syscheck.sha1",
+            "syscheck.sha256_after",
+            "syscheck.md5_after",
+            "syscheck.sha1_after",
+            "data.sha256",
+            "data.md5",
+            "data.sha1",
+        )
+    )
+    if direct:
+        return direct
+    syscheck = raw.get("syscheck") if isinstance(raw.get("syscheck"), dict) else {}
+    for key in ("sha256", "md5", "sha1", "sha256_after", "md5_after", "sha1_after"):
+        val = _as_str(syscheck.get(key))
+        if val:
+            return val
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    for key in ("sha256", "md5", "sha1"):
+        val = _as_str(data.get(key))
+        if val:
+            return val
+    return None
+
+
+def _extract_domain(raw: Dict[str, Any]) -> Optional[str]:
+    """DNS query / hostname-style domain from Wazuh data fields."""
+    direct = _as_str(
+        raw.get("domain")
+        or raw.get("dns_query")
+        or raw.get("query")
+        or _dig(
+            raw,
+            "data.dns.question.name",
+            "data.query",
+            "data.dnsquery",
+            "data.domain",
+            "data.url",
+            "data.hostname",
+        )
+    )
+    if not direct:
+        return None
+    if "://" in direct:
+        direct = direct.split("://", 1)[1]
+    direct = direct.split("/", 1)[0].strip(".")
+    if direct and not re.match(r"^\d+\.\d+\.\d+\.\d+$", direct):
+        return direct
+    return None
+
+
+def _extract_cve(raw: Dict[str, Any]) -> Optional[str]:
+    """CVE id from vulnerability detector fields or free text."""
+    direct = _as_str(
+        raw.get("cve")
+        or _dig(
+            raw,
+            "data.vulnerability.cve",
+            "vulnerability.cve",
+            "data.cve",
+            "data.vulnerability.CVE",
+        )
+    )
+    if direct:
+        m = _CVE_RE.search(direct)
+        if m:
+            return m.group(0).upper()
+        if direct.upper().startswith("CVE-"):
+            return direct.upper()
+        return direct
+    for key in ("rule_description", "full_log", "summary", "raw_message", "description"):
+        blob = _as_str(raw.get(key))
+        if not blob:
+            continue
+        m = _CVE_RE.search(blob)
+        if m:
+            return m.group(0).upper()
     return None
 
 
@@ -286,6 +386,19 @@ def normalize_alert(raw: Any, *, tenant_id: str = "local") -> Dict[str, Any]:
             host = host.get("name") or host.get("id") or host.get("ip")
         out["host"] = _as_str(host)
 
+        out["file_hash"] = _extract_file_hash(raw)
+        out["domain"] = _extract_domain(raw)
+        out["cve"] = _extract_cve(raw)
+        pkg = _as_str(
+            _dig(raw, "data.package.name", "data.package", "package.name")
+            or raw.get("package")
+        )
+        if pkg:
+            raw = dict(raw)
+            extras_seed = dict(raw.get("extras") or {}) if isinstance(raw.get("extras"), dict) else {}
+            extras_seed.setdefault("package", pkg)
+            raw["extras"] = extras_seed
+
         mitre = (
             raw.get("mitre_technique")
             or raw.get("mitre")
@@ -351,6 +464,14 @@ def normalize_alert(raw: Any, *, tenant_id: str = "local") -> Dict[str, Any]:
             "dest_ip",
             "agent_name",
             "win",
+            "file_hash",
+            "domain",
+            "cve",
+            "syscheck",
+            "package",
+            "md5",
+            "sha1",
+            "sha256",
         }
         extras: Dict[str, Any] = {}
         if isinstance(raw.get("extras"), dict):

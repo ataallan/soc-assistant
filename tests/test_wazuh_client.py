@@ -175,12 +175,9 @@ def test_fetch_401_retries_with_refreshed_token():
         call_log.append(url)
         if url.endswith("/security/user/authenticate"):
             return _json_response(200, {"data": {"token": f"tok-{len(call_log)}"}})
-        # First successful probe caches /manager/logs
-        if "/manager/logs" in url:
-            # After cache, the actual fetch: first 401, then 200 after refresh
-            auth = (kwargs.get("headers") or {}).get("Authorization", "")
-            # Count non-auth manager/logs calls
-            mgr_calls = [u for u in call_log if "/manager/logs" in u]
+        # First successful probe caches /manager/alerts (never /manager/logs)
+        if "/manager/alerts" in url:
+            mgr_calls = [u for u in call_log if "/manager/alerts" in u]
             if len(mgr_calls) == 1:
                 # probe — success so endpoint is cached
                 return _json_response(200, {"data": {"affected_items": []}})

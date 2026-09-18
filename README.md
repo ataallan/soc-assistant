@@ -110,7 +110,10 @@ Open [http://127.0.0.1:5000](http://127.0.0.1:5000). Register with an email addr
 
 Flask templates live under `templates/` (login, register, 2FA, home, reports, etc.).
 
-## Wazuh (optional)
+## Wazuh
+
+See [docs/WAZUH_SETUP.md](docs/WAZUH_SETUP.md) for Indexer + WSL setup.
+ (optional)
 
 
 ### Wazuh watcher

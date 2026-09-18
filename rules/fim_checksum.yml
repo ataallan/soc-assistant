@@ -1,0 +1,11 @@
+id: DET-FIM-001
+name: FIM integrity checksum changed
+enabled: true
+severity: medium
+priority: 60
+mitre: T1565.001
+conditions:
+  - field: text
+    op: regex
+    value: "(integrity checksum changed|syscheck.*checksum|file integrity|fim.*(changed|modified)|checksum changed)"
+explain: "File integrity (FIM) checksum change on host '{host}' — rule {rule_id}; verify change was authorized (often no src_ip)."

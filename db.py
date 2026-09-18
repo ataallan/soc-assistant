@@ -63,6 +63,26 @@ convention = {
 }
 
 
+
+
+def _blank_to_none(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _observables_json(value: Any) -> Optional[str]:
+    """Store observables dict/list as JSON text; pass through strings."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.strip() or None
+    try:
+        return json.dumps(value, default=str)
+    except Exception:
+        return None
+
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=convention)
 
@@ -85,6 +105,12 @@ class TriageEvent(Base):
     raw_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     severity_source: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     ml_assist: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Soft-migrated observables (host/hash/domain/cve + JSON extras)
+    host: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    file_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    domain: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cve: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    observables: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON extras
 
 
 class LabelQueue(Base):
@@ -196,6 +222,11 @@ class Case(Base):
     external_ticket_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     external_system: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     external_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    host: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    file_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    domain: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cve: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    observables: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON extras
 
 
 class CaseNote(Base):
@@ -398,6 +429,16 @@ def _soft_migrate_columns(engine: Engine) -> None:
             "ALTER TABLE cases ADD COLUMN IF NOT EXISTS external_ticket_id TEXT",
             "ALTER TABLE cases ADD COLUMN IF NOT EXISTS external_system TEXT",
             "ALTER TABLE cases ADD COLUMN IF NOT EXISTS external_url TEXT",
+            "ALTER TABLE triage_events ADD COLUMN IF NOT EXISTS host TEXT",
+            "ALTER TABLE triage_events ADD COLUMN IF NOT EXISTS file_hash TEXT",
+            "ALTER TABLE triage_events ADD COLUMN IF NOT EXISTS domain TEXT",
+            "ALTER TABLE triage_events ADD COLUMN IF NOT EXISTS cve TEXT",
+            "ALTER TABLE triage_events ADD COLUMN IF NOT EXISTS observables TEXT",
+            "ALTER TABLE cases ADD COLUMN IF NOT EXISTS host TEXT",
+            "ALTER TABLE cases ADD COLUMN IF NOT EXISTS file_hash TEXT",
+            "ALTER TABLE cases ADD COLUMN IF NOT EXISTS domain TEXT",
+            "ALTER TABLE cases ADD COLUMN IF NOT EXISTS cve TEXT",
+            "ALTER TABLE cases ADD COLUMN IF NOT EXISTS observables TEXT",
         ]
         try:
             with engine.begin() as conn:
@@ -414,12 +455,22 @@ def _soft_migrate_columns(engine: Engine) -> None:
         "triage_events": {
             "severity_source": "TEXT",
             "ml_assist": "INTEGER",
+            "host": "TEXT",
+            "file_hash": "TEXT",
+            "domain": "TEXT",
+            "cve": "TEXT",
+            "observables": "TEXT",
         },
         "cases": {
             "due_at": "TEXT",
             "external_ticket_id": "TEXT",
             "external_system": "TEXT",
             "external_url": "TEXT",
+            "host": "TEXT",
+            "file_hash": "TEXT",
+            "domain": "TEXT",
+            "cve": "TEXT",
+            "observables": "TEXT",
         },
     }
     with engine.begin() as conn:
@@ -457,6 +508,11 @@ def _triage_to_dict(row: TriageEvent) -> Dict[str, Any]:
         "raw_json": row.raw_json,
         "severity_source": getattr(row, "severity_source", None),
         "ml_assist": getattr(row, "ml_assist", None),
+        "host": getattr(row, "host", None),
+        "file_hash": getattr(row, "file_hash", None),
+        "domain": getattr(row, "domain", None),
+        "cve": getattr(row, "cve", None),
+        "observables": getattr(row, "observables", None),
     }
 
 
@@ -526,6 +582,11 @@ def insert_triage_event(
         raw_json=raw,
         severity_source=event.get("severity_source"),
         ml_assist=ml_assist_int,
+        host=_blank_to_none(event.get("host")),
+        file_hash=_blank_to_none(event.get("file_hash")),
+        domain=_blank_to_none(event.get("domain")),
+        cve=_blank_to_none(event.get("cve")),
+        observables=_observables_json(event.get("observables")),
     )
     with _lock:
         with session_scope(db_path) as session:
@@ -1226,6 +1287,11 @@ def _case_to_dict(row: Case) -> Dict[str, Any]:
         "external_ticket_id": getattr(row, "external_ticket_id", None),
         "external_system": getattr(row, "external_system", None),
         "external_url": getattr(row, "external_url", None),
+        "host": getattr(row, "host", None),
+        "file_hash": getattr(row, "file_hash", None),
+        "domain": getattr(row, "domain", None),
+        "cve": getattr(row, "cve", None),
+        "observables": getattr(row, "observables", None),
     }
     # Computed (not stored): sla_breached / overdue
     try:
@@ -1261,6 +1327,11 @@ def create_case(
     ip: Optional[str] = None,
     user_entity: Optional[str] = None,
     resolution_notes: Optional[str] = None,
+    host: Optional[str] = None,
+    file_hash: Optional[str] = None,
+    domain: Optional[str] = None,
+    cve: Optional[str] = None,
+    observables: Optional[Any] = None,
     db_path: Optional[Path | str] = None,
 ) -> Dict[str, Any]:
     """Create a case manually or from a triage event id.
@@ -1294,11 +1365,29 @@ def create_case(
                     ip = event.ip
                 if user_entity is None or (isinstance(user_entity, str) and not str(user_entity).strip()):
                     user_entity = event.user
+                if host is None or (isinstance(host, str) and not str(host).strip()):
+                    host = getattr(event, "host", None)
+                if file_hash is None or (isinstance(file_hash, str) and not str(file_hash).strip()):
+                    file_hash = getattr(event, "file_hash", None)
+                if domain is None or (isinstance(domain, str) and not str(domain).strip()):
+                    domain = getattr(event, "domain", None)
+                if cve is None or (isinstance(cve, str) and not str(cve).strip()):
+                    cve = getattr(event, "cve", None)
+                if observables is None:
+                    observables = getattr(event, "observables", None)
                 # Blank strings from triage copy are missing, not real entities
                 if isinstance(ip, str) and not ip.strip():
                     ip = None
                 if isinstance(user_entity, str) and not str(user_entity).strip():
                     user_entity = None
+                if isinstance(host, str) and not str(host).strip():
+                    host = None
+                if isinstance(file_hash, str) and not str(file_hash).strip():
+                    file_hash = None
+                if isinstance(domain, str) and not str(domain).strip():
+                    domain = None
+                if isinstance(cve, str) and not str(cve).strip():
+                    cve = None
                 if severity == "medium" and event.severity:
                     ev_sev = (event.severity or "").strip().lower()
                     if ev_sev in VALID_CASE_SEVERITIES:
@@ -1311,6 +1400,11 @@ def create_case(
                 ip = None
             if isinstance(user_entity, str) and not str(user_entity).strip():
                 user_entity = None
+            host = _blank_to_none(host)
+            file_hash = _blank_to_none(file_hash)
+            domain = _blank_to_none(domain)
+            cve = _blank_to_none(cve)
+            observables_json = _observables_json(observables)
             now = _utc_now_iso()
             try:
                 from sla import compute_due_at
@@ -1332,6 +1426,11 @@ def create_case(
                 user_entity=user_entity,
                 resolution_notes=resolution_notes,
                 due_at=due_at,
+                host=host,
+                file_hash=file_hash,
+                domain=domain,
+                cve=cve,
+                observables=observables_json,
             )
             session.add(row)
             session.flush()

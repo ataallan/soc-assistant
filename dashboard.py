@@ -92,6 +92,7 @@ except Exception as e:
 # -------------------------------------------------
 try:
     from wazuh_integration import (
+        alert_ingest_status,
         fetch_wazuh_alerts,
         fetch_wazuh_alert_details,
         get_last_auth_error,
@@ -104,6 +105,7 @@ except Exception:
     def get_token(force_refresh=False): return None
     def get_last_auth_error(): return "Wazuh integration unavailable."
     def wazuh_api_host(): return "unknown"
+    def alert_ingest_status(): return {"preferred": "manager_api", "indexer_configured": False, "note": "Wazuh integration unavailable."}
 
 # -------------------------------------------------
 # FLASK
@@ -818,6 +820,7 @@ def collect_health() -> dict:
             "authenticated": authenticated,
             "api_host": wazuh_api_host(),
             "last_error": wazuh_error,
+            "ingest": alert_ingest_status(),
         },
         "watchers": {
             "csv": _watcher_running("csv"),
@@ -1157,6 +1160,10 @@ def cases_create():
             summary=summary,
             ip=ip,
             user_entity=user_entity,
+            host=data.get("host"),
+            file_hash=data.get("file_hash"),
+            domain=data.get("domain"),
+            cve=data.get("cve"),
         )
         msg = f"Opened case #{case['id']}."
         ok = True

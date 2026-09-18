@@ -134,7 +134,11 @@
             {% endif %}
             <div class="small text-secondary">
               <span class="me-2">IP: {% if c.ip %}{{ c.ip }}{% else %}not in alert{% endif %}</span>
-              <span>User: {% if c.user_entity %}{{ c.user_entity }}{% else %}not in alert{% endif %}</span>
+              <span class="me-2">User: {% if c.user_entity %}{{ c.user_entity }}{% else %}not in alert{% endif %}</span>
+              <span class="me-2">Host: {% if c.host %}{{ c.host }}{% else %}not in alert{% endif %}</span>
+              {% if c.file_hash %}<span class="me-2">Hash: {{ c.file_hash[:12] }}…</span>{% endif %}
+              {% if c.domain %}<span class="me-2">Domain: {{ c.domain }}</span>{% endif %}
+              {% if c.cve %}<span>CVE: {{ c.cve }}</span>{% endif %}
             </div>
           </td>
           <td><span class="badge text-bg-secondary">{{ c.status }}</span></td>

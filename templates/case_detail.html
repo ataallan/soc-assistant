@@ -43,6 +43,14 @@
         <dd class="col-sm-9">{% if case.ip %}{{ case.ip }}{% else %}<span class="text-secondary">not in alert</span>{% endif %}</dd>
         <dt class="col-sm-3 text-secondary">User</dt>
         <dd class="col-sm-9">{% if case.user_entity %}{{ case.user_entity }}{% else %}<span class="text-secondary">not in alert</span>{% endif %}</dd>
+        <dt class="col-sm-3 text-secondary">Host</dt>
+        <dd class="col-sm-9">{% if case.host %}{{ case.host }}{% else %}<span class="text-secondary">not in alert</span>{% endif %}</dd>
+        <dt class="col-sm-3 text-secondary">File hash</dt>
+        <dd class="col-sm-9">{% if case.file_hash %}{{ case.file_hash }}{% else %}<span class="text-secondary">not in alert</span>{% endif %}</dd>
+        <dt class="col-sm-3 text-secondary">Domain</dt>
+        <dd class="col-sm-9">{% if case.domain %}{{ case.domain }}{% else %}<span class="text-secondary">not in alert</span>{% endif %}</dd>
+        <dt class="col-sm-3 text-secondary">CVE</dt>
+        <dd class="col-sm-9">{% if case.cve %}{{ case.cve }}{% else %}<span class="text-secondary">not in alert</span>{% endif %}</dd>
         <dt class="col-sm-3 text-secondary">Triage event</dt>
         <dd class="col-sm-9">
           {% if case.triage_event_id %}
