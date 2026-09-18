@@ -143,6 +143,18 @@ def resend_configured() -> bool:
     return bool((os.environ.get("RESEND_API_KEY") or "").strip())
 
 
+def mask_login_email(email: str) -> str:
+    """Mask an email for on-page hints (always the account currently signing in)."""
+    email = (email or "").strip()
+    if "@" not in email:
+        return (email[:1] + "***") if email else ""
+    local, _, domain = email.partition("@")
+    if not local:
+        return "***@" + domain
+    return f"{local[0]}***@{domain}"
+
+
+
 def mail_configured() -> bool:
     """True when any email OTP channel is configured (Resend preferred, else Gmail SMTP)."""
     return resend_configured() or bool(app.config['MAIL_USERNAME'] and app.config['MAIL_PASSWORD'])
@@ -416,8 +428,10 @@ def login():
         session["otp"] = otp
         session["otp_time"] = time.time()
 
+        # OTP always goes to the account email that just authenticated (username).
         emailed = deliver_otp(username, otp)
         session["otp_emailed"] = bool(emailed)
+        session["otp_email_hint"] = mask_login_email(username)
         session.pop("demo_otp", None)  # never show codes in the browser
         return redirect("/2fa")
 
@@ -437,7 +451,7 @@ def two_factor():
             session.pop("pending_user", None)
             session.pop("otp", None)
             session.pop("otp_time", None)
-            return render_template("2fa.html", error="Code expired. Please login again.", otp_emailed=False)
+            return render_template("2fa.html", error="Code expired. Please login again.", otp_emailed=False, otp_email_hint="")
 
         if code == session.get("otp"):
             username = session["pending_user"]
@@ -448,17 +462,20 @@ def two_factor():
             session.pop("otp_time", None)
             session.pop("demo_otp", None)
             session.pop("otp_emailed", None)
+            session.pop("otp_email_hint", None)
             return redirect("/")
 
         return render_template(
             "2fa.html",
             error="Invalid code",
             otp_emailed=bool(session.get("otp_emailed")),
+            otp_email_hint=session.get("otp_email_hint") or mask_login_email(session.get("pending_user") or ""),
         )
 
     return render_template(
         "2fa.html",
         otp_emailed=bool(session.get("otp_emailed")),
+        otp_email_hint=session.get("otp_email_hint") or mask_login_email(session.get("pending_user") or ""),
     )
 
 
@@ -475,14 +492,17 @@ def resend_otp():
     session["otp"] = otp
     session["otp_time"] = time.time()
 
+    # Resend always targets the pending login account email.
     emailed = deliver_otp(username, otp, subject="Your New Verification Code")
     session["otp_emailed"] = bool(emailed)
+    session["otp_email_hint"] = mask_login_email(username)
     session.pop("demo_otp", None)
+    hint = session["otp_email_hint"]
     if emailed:
-        msg = "A new code has been sent to your email."
+        msg = f"A new code has been sent to {hint}."
     else:
         msg = "Email delivery is not configured. Ask your admin to set RESEND_API_KEY (or check the server log)."
-    return render_template("2fa.html", message=msg, otp_emailed=bool(emailed))
+    return render_template("2fa.html", message=msg, otp_emailed=bool(emailed), otp_email_hint=hint)
 
 @app.route("/logout")
 def logout():

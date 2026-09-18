@@ -32,7 +32,11 @@
         {% endif %}
 
         <p class="text-center text-secondary" style="font-size:0.9rem;">
-            {% if otp_emailed %}
+            {% if otp_emailed and otp_email_hint %}
+            A 6-digit verification code was sent to <strong>{{ otp_email_hint }}</strong>. It expires in 5 minutes.
+            {% elif otp_email_hint %}
+            Enter the 6-digit code sent to <strong>{{ otp_email_hint }}</strong> (expires in 5 minutes).
+            {% elif otp_emailed %}
             A 6-digit verification code was sent to your email. It expires in 5 minutes.
             {% else %}
             Enter the 6-digit verification code from your email (expires in 5 minutes).
