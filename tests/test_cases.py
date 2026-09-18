@@ -140,3 +140,70 @@ def test_invalid_status_and_missing_case(tmp_path, monkeypatch):
         pass
 
     assert db.get_case(99999, db_path=db_path) is None
+
+
+def test_due_at_set_on_create(tmp_path, monkeypatch):
+    db_path = _temp_db(tmp_path, monkeypatch)
+    case = db.create_case(title="SLA case", severity="critical", db_path=db_path)
+    assert case["due_at"]
+    assert case["is_overdue"] is False
+    # critical = 4h from create — not overdue immediately
+    from datetime import datetime, timedelta, timezone
+    from sla import compute_due_at
+
+    expected = compute_due_at("critical", created_at=case["created_at"])
+    assert case["due_at"] == expected
+
+
+def test_list_cases_mine_and_overdue_filters(tmp_path, monkeypatch):
+    db_path = _temp_db(tmp_path, monkeypatch)
+    a = db.create_case(
+        title="Alice case",
+        severity="high",
+        assignee="alice@example.com",
+        db_path=db_path,
+    )
+    b = db.create_case(
+        title="Bob case",
+        severity="low",
+        assignee="bob@example.com",
+        db_path=db_path,
+    )
+    mine = db.list_cases(mine="Alice@Example.com", status="all", db_path=db_path)
+    assert len(mine) == 1
+    assert mine[0]["id"] == a["id"]
+
+    # Force overdue by rewriting due_at into the past
+    from datetime import datetime, timedelta, timezone
+
+    past = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    with db.session_scope(db_path) as session:
+        row = session.get(db.Case, a["id"])
+        row.due_at = past
+        session.flush()
+
+    overdue = db.list_cases(overdue=True, status="all", db_path=db_path)
+    assert len(overdue) == 1
+    assert overdue[0]["id"] == a["id"]
+    assert overdue[0]["is_overdue"] is True
+    assert overdue[0]["sla_breached"] is True
+
+    # Closed cases are not overdue even with past due_at
+    db.update_case_status(a["id"], "closed", db_path=db_path)
+    overdue2 = db.list_cases(overdue=True, status="all", db_path=db_path)
+    assert overdue2 == []
+
+
+def test_soft_migrate_external_columns(tmp_path, monkeypatch):
+    db_path = _temp_db(tmp_path, monkeypatch)
+    case = db.create_case(title="ext", db_path=db_path)
+    updated = db.update_case_external(
+        case["id"],
+        external_ticket_id="T-1",
+        external_system="stub",
+        external_url="https://example.invalid/T-1",
+        db_path=db_path,
+    )
+    assert updated["external_ticket_id"] == "T-1"
+    assert updated["external_system"] == "stub"
+    assert updated["external_url"].endswith("/T-1")

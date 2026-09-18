@@ -5,7 +5,11 @@
 
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
   <div>
-    <h1 class="page-title">Case #{{ case.id }}</h1>
+    <h1 class="page-title">Case #{{ case.id }}
+      {% if case.is_overdue %}
+      <span class="badge text-bg-danger align-middle" style="font-size:0.7rem;">OVERDUE</span>
+      {% endif %}
+    </h1>
     <p class="page-subtitle mb-0">{{ case.title }}</p>
   </div>
   <a href="/cases" class="btn btn-secondary btn-sm">← Cases</a>
@@ -26,10 +30,15 @@
           {{ case.severity }}
         </span>
         <span class="badge text-bg-secondary">{{ case.source }}</span>
+        {% if case.is_overdue %}
+        <span class="badge text-bg-danger">OVERDUE / SLA breached</span>
+        {% endif %}
       </div>
       <dl class="row mb-0 small">
         <dt class="col-sm-3 text-secondary">Assignee</dt>
         <dd class="col-sm-9">{{ case.assignee or '—' }}</dd>
+        <dt class="col-sm-3 text-secondary">Due at</dt>
+        <dd class="col-sm-9 {% if case.is_overdue %}text-danger fw-semibold{% endif %}">{{ case.due_at or '—' }}</dd>
         <dt class="col-sm-3 text-secondary">IP</dt>
         <dd class="col-sm-9">{{ case.ip or '—' }}</dd>
         <dt class="col-sm-3 text-secondary">User</dt>
@@ -40,6 +49,17 @@
             #{{ case.triage_event_id }}
             <a class="ms-2" href="/report">Triage report</a>
           {% else %}—{% endif %}
+        </dd>
+        <dt class="col-sm-3 text-secondary">External ticket</dt>
+        <dd class="col-sm-9">
+          {% if case.external_ticket_id %}
+            <span class="me-1">{{ case.external_system or 'ticket' }}:{{ case.external_ticket_id }}</span>
+            {% if case.external_url %}
+              <a href="{{ case.external_url }}" target="_blank" rel="noopener noreferrer">Open ticket</a>
+            {% endif %}
+          {% else %}
+            —
+          {% endif %}
         </dd>
         <dt class="col-sm-3 text-secondary">Created</dt>
         <dd class="col-sm-9">{{ case.created_at }}</dd>
@@ -100,7 +120,12 @@
         </div>
         <div>
           <label class="form-label small text-secondary">Assignee</label>
-          <input type="text" name="assignee" class="form-control form-control-sm" value="{{ case.assignee or user or '' }}">
+          <select name="assignee" class="form-select form-select-sm">
+            <option value="">— unassigned —</option>
+            {% for email in assignee_options or [] %}
+            <option value="{{ email }}" {% if case.assignee and email == case.assignee|lower %}selected{% endif %}>{{ email }}</option>
+            {% endfor %}
+          </select>
         </div>
         <div>
           <label class="form-label small text-secondary">Resolution notes</label>
@@ -120,6 +145,24 @@
         </form>
         {% endfor %}
       </div>
+    </div>
+
+    <div class="soc-panel mb-3">
+      <h4 class="mb-2" style="font-size:1.05rem;">External ticket</h4>
+      <p class="small text-secondary mb-3">
+        Sync mode: <strong>{{ case_sync_mode_label or case_sync_mode or 'simulated' }}</strong>
+      </p>
+      {% if case.external_url %}
+      <a class="btn btn-sm btn-outline-info mb-2" href="{{ case.external_url }}" target="_blank" rel="noopener noreferrer">
+        Open linked ticket
+      </a>
+      {% endif %}
+      <form method="POST" action="/cases/{{ case.id }}/sync">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-sm btn-outline-primary w-100">
+          <i class="bi bi-arrow-repeat me-1"></i> Sync ticket
+        </button>
+      </form>
     </div>
   </div>
 </div>

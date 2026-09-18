@@ -6,7 +6,7 @@
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
   <div>
     <h1 class="page-title">Cases</h1>
-    <p class="page-subtitle">Open, track, and close investigation tickets from triage or manually.</p>
+    <p class="page-subtitle">Open, track, and close investigation tickets from triage or manually. SLA due times follow severity.</p>
   </div>
   <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#newCaseForm" aria-expanded="false">
     <i class="bi bi-plus-lg me-1"></i> New case
@@ -67,7 +67,12 @@
       </div>
       <div class="col-md-3">
         <label class="form-label small text-secondary">Assignee</label>
-        <input type="text" name="assignee" class="form-control form-control-sm" value="{{ user or '' }}" placeholder="analyst">
+        <select name="assignee" class="form-select form-select-sm">
+          <option value="">— unassigned —</option>
+          {% for email in assignee_options or [] %}
+          <option value="{{ email }}" {% if user and email == user|lower %}selected{% endif %}>{{ email }}</option>
+          {% endfor %}
+        </select>
       </div>
       <div class="col-md-4">
         <label class="form-label small text-secondary">IP</label>
@@ -93,11 +98,13 @@
 </div>
 
 <div class="filter-links mb-3">
-  <a href="/cases?status=open" class="{% if status == 'open' %}active{% endif %}">Open</a>
-  <a href="/cases?status=investigating" class="{% if status == 'investigating' %}active{% endif %}">Investigating</a>
-  <a href="/cases?status=contained" class="{% if status == 'contained' %}active{% endif %}">Contained</a>
-  <a href="/cases?status=closed" class="{% if status == 'closed' %}active{% endif %}">Closed</a>
-  <a href="/cases?status=all" class="{% if status == 'all' %}active{% endif %}">All</a>
+  <a href="/cases?status=open" class="{% if status == 'open' and not filter_mine and not filter_overdue %}active{% endif %}">Open</a>
+  <a href="/cases?status=investigating" class="{% if status == 'investigating' and not filter_mine and not filter_overdue %}active{% endif %}">Investigating</a>
+  <a href="/cases?status=contained" class="{% if status == 'contained' and not filter_mine and not filter_overdue %}active{% endif %}">Contained</a>
+  <a href="/cases?status=closed" class="{% if status == 'closed' and not filter_mine and not filter_overdue %}active{% endif %}">Closed</a>
+  <a href="/cases?status=all" class="{% if status == 'all' and not filter_mine and not filter_overdue %}active{% endif %}">All</a>
+  <a href="/cases?filter=mine" class="{% if filter_mine %}active{% endif %}">My cases</a>
+  <a href="/cases?filter=overdue" class="{% if filter_overdue %}active{% endif %}">Overdue</a>
 </div>
 
 <div class="soc-panel">
@@ -111,6 +118,7 @@
           <th style="width:7rem;">Status</th>
           <th style="width:7rem;">Severity</th>
           <th style="width:9rem;">Assignee</th>
+          <th style="width:11rem;">Due</th>
           <th style="width:8rem;">Source</th>
           <th style="width:11rem;">Updated</th>
         </tr>
@@ -121,6 +129,9 @@
           <td class="text-secondary"><a href="/cases/{{ c.id }}">#{{ c.id }}</a></td>
           <td>
             <a href="/cases/{{ c.id }}" class="fw-medium text-decoration-none">{{ c.title }}</a>
+            {% if c.is_overdue %}
+            <span class="badge text-bg-danger ms-1">OVERDUE</span>
+            {% endif %}
             {% if c.ip or c.user_entity %}
             <div class="small text-secondary">
               {% if c.ip %}<span class="me-2">IP: {{ c.ip }}</span>{% endif %}
@@ -135,6 +146,9 @@
             </span>
           </td>
           <td class="text-secondary">{{ c.assignee or '—' }}</td>
+          <td class="small {% if c.is_overdue %}text-danger fw-semibold{% else %}text-secondary{% endif %}">
+            {{ c.due_at or '—' }}
+          </td>
           <td class="text-secondary">{{ c.source }}{% if c.triage_event_id %} · #{{ c.triage_event_id }}{% endif %}</td>
           <td class="small text-secondary">{{ c.updated_at }}</td>
         </tr>

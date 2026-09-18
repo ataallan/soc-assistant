@@ -6,7 +6,14 @@ from unittest.mock import patch
 
 import pytest
 
-from rbac import parse_admin_emails, role_for_identity, ROLE_ADMIN, ROLE_ANALYST
+from rbac import (
+    assignee_emails,
+    parse_admin_emails,
+    parse_analyst_emails,
+    role_for_identity,
+    ROLE_ADMIN,
+    ROLE_ANALYST,
+)
 
 
 def test_parse_admin_emails_empty():
@@ -225,3 +232,11 @@ def test_session_cookie_flags(rbac_client):
     _, dashboard = rbac_client
     assert dashboard.app.config["SESSION_COOKIE_HTTPONLY"] is True
     assert dashboard.app.config["SESSION_COOKIE_SAMESITE"] == "Lax"
+
+
+def test_parse_analyst_and_assignee_emails(monkeypatch):
+    monkeypatch.setenv("SOC_ADMIN_EMAILS", "Admin@Example.COM")
+    monkeypatch.setenv("SOC_ANALYST_EMAILS", "a1@x.io, a2@x.io")
+    assert parse_analyst_emails() == {"a1@x.io", "a2@x.io"}
+    got = assignee_emails(include="Extra@X.io")
+    assert got == ["a1@x.io", "a2@x.io", "admin@example.com", "extra@x.io"]

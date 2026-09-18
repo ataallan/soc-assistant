@@ -191,6 +191,11 @@ class Case(Base):
     ip: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     user_entity: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     resolution_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Soft-migrated columns (SLA + external ticket sync)
+    due_at: Mapped[Optional[str]] = mapped_column(Text, nullable=True, index=True)
+    external_ticket_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    external_system: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    external_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class CaseNote(Base):
@@ -389,6 +394,10 @@ def _soft_migrate_columns(engine: Engine) -> None:
         stmts = [
             "ALTER TABLE triage_events ADD COLUMN IF NOT EXISTS severity_source TEXT",
             "ALTER TABLE triage_events ADD COLUMN IF NOT EXISTS ml_assist INTEGER",
+            "ALTER TABLE cases ADD COLUMN IF NOT EXISTS due_at TEXT",
+            "ALTER TABLE cases ADD COLUMN IF NOT EXISTS external_ticket_id TEXT",
+            "ALTER TABLE cases ADD COLUMN IF NOT EXISTS external_system TEXT",
+            "ALTER TABLE cases ADD COLUMN IF NOT EXISTS external_url TEXT",
         ]
         try:
             with engine.begin() as conn:
@@ -405,7 +414,13 @@ def _soft_migrate_columns(engine: Engine) -> None:
         "triage_events": {
             "severity_source": "TEXT",
             "ml_assist": "INTEGER",
-        }
+        },
+        "cases": {
+            "due_at": "TEXT",
+            "external_ticket_id": "TEXT",
+            "external_system": "TEXT",
+            "external_url": "TEXT",
+        },
     }
     with engine.begin() as conn:
         for table, cols in wanted.items():
@@ -1192,7 +1207,8 @@ VALID_CASE_SOURCES = frozenset({"triage", "manual", "wazuh"})
 
 
 def _case_to_dict(row: Case) -> Dict[str, Any]:
-    return {
+    due_at = getattr(row, "due_at", None)
+    out = {
         "id": row.id,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
@@ -1206,7 +1222,21 @@ def _case_to_dict(row: Case) -> Dict[str, Any]:
         "ip": row.ip,
         "user_entity": row.user_entity,
         "resolution_notes": row.resolution_notes,
+        "due_at": due_at,
+        "external_ticket_id": getattr(row, "external_ticket_id", None),
+        "external_system": getattr(row, "external_system", None),
+        "external_url": getattr(row, "external_url", None),
     }
+    # Computed (not stored): sla_breached / overdue
+    try:
+        from sla import is_overdue
+
+        out["is_overdue"] = is_overdue(out)
+        out["sla_breached"] = out["is_overdue"]
+    except Exception:
+        out["is_overdue"] = False
+        out["sla_breached"] = False
+    return out
 
 
 def _case_note_to_dict(row: CaseNote) -> Dict[str, Any]:
@@ -1273,6 +1303,12 @@ def create_case(
 
             title_final = (title or "").strip() or "Untitled case"
             now = _utc_now_iso()
+            try:
+                from sla import compute_due_at
+
+                due_at = compute_due_at(sev, created_at=now)
+            except Exception:
+                due_at = None
             row = Case(
                 created_at=now,
                 updated_at=now,
@@ -1286,6 +1322,7 @@ def create_case(
                 ip=ip,
                 user_entity=user_entity,
                 resolution_notes=resolution_notes,
+                due_at=due_at,
             )
             session.add(row)
             session.flush()
@@ -1295,10 +1332,19 @@ def create_case(
 def list_cases(
     *,
     status: Optional[str] = None,
+    assignee: Optional[str] = None,
+    overdue: bool = False,
+    mine: Optional[str] = None,
     limit: Optional[int] = None,
     db_path: Optional[Path | str] = None,
 ) -> List[Dict[str, Any]]:
-    """List cases newest-first. status=None or 'all' returns every status."""
+    """List cases newest-first.
+
+    Filters:
+      status=None/'all' — every status
+      assignee / mine — case-insensitive exact match on assignee email
+      overdue=True — due_at in the past and status != closed (computed)
+    """
     init_db(db_path)
     with _lock:
         with session_scope(db_path) as session:
@@ -1308,8 +1354,15 @@ def list_cases(
                 if st not in VALID_CASE_STATUSES:
                     raise ValueError(f"Invalid case status filter: {status}")
                 stmt = stmt.where(Case.status == st)
+            assignee_filter = (mine if mine is not None else assignee)
+            if assignee_filter is not None and str(assignee_filter).strip():
+                # SQLite/Postgres: compare lower(assignee)
+                needle = str(assignee_filter).strip().lower()
+                stmt = stmt.where(func.lower(Case.assignee) == needle)
             rows = session.scalars(stmt).all()
             out = [_case_to_dict(r) for r in rows]
+    if overdue:
+        out = [c for c in out if c.get("is_overdue")]
     if limit is not None and limit >= 0:
         out = out[: int(limit)]
     return out
@@ -1390,6 +1443,32 @@ def update_case_status(
                 case.resolution_notes = resolution_notes
             if assignee is not None:
                 case.assignee = (assignee or "").strip() or None
+            session.flush()
+            return _case_to_dict(case)
+
+
+def update_case_external(
+    case_id: int,
+    *,
+    external_ticket_id: Optional[str] = None,
+    external_system: Optional[str] = None,
+    external_url: Optional[str] = None,
+    db_path: Optional[Path | str] = None,
+) -> Dict[str, Any]:
+    """Store external ticket linkage fields on a case."""
+    init_db(db_path)
+    with _lock:
+        with session_scope(db_path) as session:
+            case = session.get(Case, int(case_id))
+            if case is None:
+                raise KeyError(f"case id {case_id} not found")
+            if external_ticket_id is not None:
+                case.external_ticket_id = (external_ticket_id or "").strip() or None
+            if external_system is not None:
+                case.external_system = (external_system or "").strip() or None
+            if external_url is not None:
+                case.external_url = (external_url or "").strip() or None
+            case.updated_at = _utc_now_iso()
             session.flush()
             return _case_to_dict(case)
 

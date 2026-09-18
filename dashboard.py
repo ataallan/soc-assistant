@@ -25,7 +25,7 @@ from containment import (
     preview_unblock_ip,
     preview_unblock_user,
 )
-from rbac import ROLE_ADMIN, role_for_identity
+from rbac import ROLE_ADMIN, assignee_emails, role_for_identity
 from report_filters import (
     compute_alert_counts,
     filter_report_df,
@@ -50,6 +50,11 @@ from db import (
     save_label,
     skip_label,
     update_case_status,
+)
+from case_sync import (
+    get_mode as get_case_sync_mode,
+    get_mode_label as get_case_sync_mode_label,
+    sync_case,
 )
 from triage_engine import (
     format_ml_assist_display,
@@ -1061,19 +1066,42 @@ def labels_retrain():
 @login_required
 def cases_page():
     status = (request.args.get("status") or "open").strip().lower()
+    filter_name = (request.args.get("filter") or "").strip().lower()
+    mine = request.args.get("mine", "").strip().lower() in ("1", "true", "yes") or filter_name == "mine"
+    overdue = (
+        request.args.get("overdue", "").strip().lower() in ("1", "true", "yes")
+        or filter_name == "overdue"
+        or status == "overdue"
+    )
+    if status == "overdue":
+        status = "all"
+        overdue = True
     if status not in ("all", "open", "investigating", "contained", "closed"):
         status = "open"
-    cases = list_cases(status=status if status != "all" else "all")
+    # My cases / Overdue default to all statuses unless status is explicit in query
+    if (mine or overdue) and "status" not in request.args:
+        status = "all"
+
+    kwargs = {"status": status if status != "all" else "all", "overdue": overdue}
+    if mine:
+        kwargs["mine"] = session.get("user")
+    cases = list_cases(**kwargs)
     counts = counts_by_status()
     flash = session.pop("cases_flash", None)
+    user = session.get("user")
     return render_template(
         "cases.html",
-        user=session.get("user"),
+        user=user,
         cases=cases,
         counts=counts,
         status=status,
+        filter_mine=mine,
+        filter_overdue=overdue,
+        assignee_options=assignee_emails(include=user),
         flash=flash,
         ml_assist_only=get_ml_assist_only(),
+        case_sync_mode=get_case_sync_mode(),
+        case_sync_mode_label=get_case_sync_mode_label(),
     )
 
 
@@ -1085,12 +1113,16 @@ def case_detail(case_id: int):
         session["cases_flash"] = {"ok": False, "message": f"Case #{case_id} not found."}
         return redirect("/cases")
     flash = session.pop("cases_flash", None)
+    user = session.get("user")
     return render_template(
         "case_detail.html",
-        user=session.get("user"),
+        user=user,
         case=case,
         flash=flash,
+        assignee_options=assignee_emails(include=case.get("assignee") or user),
         ml_assist_only=get_ml_assist_only(),
+        case_sync_mode=get_case_sync_mode(),
+        case_sync_mode_label=get_case_sync_mode_label(),
     )
 
 
@@ -1188,6 +1220,25 @@ def cases_update_status(case_id: int):
         out = case
     except Exception as exc:
         msg = f"Could not update status: {exc}"
+        ok = False
+        out = {"error": str(exc)}
+
+    if _wants_json():
+        return jsonify({"ok": ok, "message": msg, **out}), (200 if ok else 400)
+    session["cases_flash"] = {"ok": ok, "message": msg}
+    return redirect(f"/cases/{case_id}")
+
+
+@app.route("/cases/<int:case_id>/sync", methods=["POST"])
+@login_required
+def cases_sync(case_id: int):
+    try:
+        result = sync_case(case_id, actor=session.get("user"))
+        msg = result.get("message") or ("Synced." if result.get("ok") else "Sync failed.")
+        ok = bool(result.get("ok"))
+        out = result
+    except Exception as exc:
+        msg = f"Could not sync ticket: {exc}"
         ok = False
         out = {"error": str(exc)}
 
