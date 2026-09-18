@@ -83,6 +83,51 @@ class TriageEvent(Base):
     containment_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     source: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     raw_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    severity_source: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ml_assist: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+
+class LabelQueue(Base):
+    """Pending Wazuh (or other) alerts awaiting analyst severity labels."""
+
+    __tablename__ = "label_queue"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'labeled', 'skipped')",
+            name="label_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False, default="wazuh")
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    full_log: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rule_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rule_level: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    wazuh_severity: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending", index=True)
+    label_severity: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    labeled_at: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class AlertsLabeled(Base):
+    """Analyst-labeled alerts in training-row shape."""
+
+    __tablename__ = "alerts_labeled"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_ip: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    username: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    event_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    severity: Mapped[Optional[str]] = mapped_column(Text, nullable=True, index=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    label_source: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    queue_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class ContainmentBlock(Base):
@@ -127,6 +172,8 @@ TRIAGE_COLUMNS = [
     "containment_note",
     "source",
     "raw_json",
+    "severity_source",
+    "ml_assist",
 ]
 
 
@@ -277,10 +324,58 @@ def init_db(db_path: Optional[Path | str] = None) -> Union[Path, str]:
     engine = get_engine(db_path)
     with _lock:
         Base.metadata.create_all(engine)
+        _soft_migrate_columns(engine)
     url = get_database_url(db_path)
     if make_url(url).get_backend_name() == "sqlite":
         return Path(db_path) if db_path is not None else get_db_path()
     return url
+
+
+def _soft_migrate_columns(engine: Engine) -> None:
+    """Add newly introduced columns on existing SQLite DBs (create_all will not)."""
+    try:
+        backend = make_url(str(engine.url)).get_backend_name()
+    except Exception:
+        backend = "sqlite"
+    if backend != "sqlite":
+        # Postgres: rely on create_all for new tables; ALTER for known columns.
+        stmts = [
+            "ALTER TABLE triage_events ADD COLUMN IF NOT EXISTS severity_source TEXT",
+            "ALTER TABLE triage_events ADD COLUMN IF NOT EXISTS ml_assist INTEGER",
+        ]
+        try:
+            with engine.begin() as conn:
+                for stmt in stmts:
+                    try:
+                        conn.exec_driver_sql(stmt)
+                    except Exception as exc:
+                        logger.debug("soft migrate skip: %s (%s)", stmt, exc)
+        except Exception as exc:
+            logger.debug("soft migrate postgres skipped: %s", exc)
+        return
+
+    wanted = {
+        "triage_events": {
+            "severity_source": "TEXT",
+            "ml_assist": "INTEGER",
+        }
+    }
+    with engine.begin() as conn:
+        for table, cols in wanted.items():
+            try:
+                rows = conn.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()
+            except Exception:
+                continue
+            existing = {r[1] for r in rows}  # name is index 1
+            for col, coltype in cols.items():
+                if col in existing:
+                    continue
+                try:
+                    conn.exec_driver_sql(
+                        f"ALTER TABLE {table} ADD COLUMN {col} {coltype}"
+                    )
+                except Exception as exc:
+                    logger.debug("soft migrate %s.%s: %s", table, col, exc)
 
 
 def _triage_to_dict(row: TriageEvent) -> Dict[str, Any]:
@@ -298,6 +393,8 @@ def _triage_to_dict(row: TriageEvent) -> Dict[str, Any]:
         "containment_note": row.containment_note,
         "source": row.source,
         "raw_json": row.raw_json,
+        "severity_source": getattr(row, "severity_source", None),
+        "ml_assist": getattr(row, "ml_assist", None),
     }
 
 
@@ -346,6 +443,12 @@ def insert_triage_event(
         except Exception:
             raw = None
 
+    ml_assist_val = event.get("ml_assist")
+    if ml_assist_val is None:
+        ml_assist_int = None
+    else:
+        ml_assist_int = 1 if bool(ml_assist_val) else 0
+
     row = TriageEvent(
         timestamp=ts,
         log=event.get("log"),
@@ -359,6 +462,8 @@ def insert_triage_event(
         containment_note=event.get("containment_note"),
         source=src,
         raw_json=raw,
+        severity_source=event.get("severity_source"),
+        ml_assist=ml_assist_int,
     )
     with _lock:
         with session_scope(db_path) as session:
@@ -754,6 +859,281 @@ def ensure_db_ready(db_path: Optional[Path | str] = None) -> Dict[str, int]:
     return migrate_from_legacy_files(db_path=db_path)
 
 
+
+# ---------------------------------------------------------------------------
+# Label queue (live Wazuh labeling pipeline)
+# ---------------------------------------------------------------------------
+
+LABELED_CSV_PATH = DATA_DIR / "labeled_alerts.csv"
+LABELED_CSV_FIELDS = [
+    "timestamp",
+    "source_ip",
+    "username",
+    "event_type",
+    "severity",
+    "description",
+]
+VALID_LABEL_SEVERITIES = frozenset({"low", "medium", "high", "critical"})
+
+
+def _label_queue_to_dict(row: LabelQueue) -> Dict[str, Any]:
+    return {
+        "id": row.id,
+        "created_at": row.created_at,
+        "source": row.source,
+        "summary": row.summary,
+        "full_log": row.full_log,
+        "agent": row.agent,
+        "rule_id": row.rule_id,
+        "rule_level": row.rule_level,
+        "wazuh_severity": row.wazuh_severity,
+        "status": row.status,
+        "label_severity": row.label_severity,
+        "labeled_at": row.labeled_at,
+        "notes": row.notes,
+    }
+
+
+def _dedupe_key(summary: Optional[str], full_log: Optional[str]) -> str:
+    s = (summary or "").strip()
+    f = (full_log or "").strip()
+    return f"{s}\n{f}"
+
+
+def insert_label_queue_items(
+    items: List[Dict[str, Any]],
+    *,
+    db_path: Optional[Path | str] = None,
+    source: str = "wazuh",
+) -> Dict[str, int]:
+    """Insert new pending label-queue rows; dedupe by summary+full_log.
+
+    Returns counts: inserted, skipped_dupes, total_seen.
+    """
+    init_db(db_path)
+    inserted = 0
+    skipped = 0
+    seen = 0
+    with _lock:
+        with session_scope(db_path) as session:
+            existing_rows = session.scalars(select(LabelQueue)).all()
+            existing_keys = {
+                _dedupe_key(r.summary, r.full_log) for r in existing_rows
+            }
+            for item in items or []:
+                seen += 1
+                summary = item.get("summary") or item.get("rule_description")
+                full_log = item.get("full_log") or item.get("summary") or ""
+                key = _dedupe_key(summary, full_log)
+                if not key.strip() or key in existing_keys:
+                    skipped += 1
+                    continue
+                existing_keys.add(key)
+                level = item.get("rule_level")
+                row = LabelQueue(
+                    created_at=_utc_now_iso(),
+                    source=source or item.get("source") or "wazuh",
+                    summary=summary,
+                    full_log=full_log,
+                    agent=item.get("agent"),
+                    rule_id=str(item.get("rule_id")) if item.get("rule_id") is not None else None,
+                    rule_level=str(level) if level is not None else None,
+                    wazuh_severity=item.get("severity") or item.get("wazuh_severity"),
+                    status="pending",
+                )
+                session.add(row)
+                inserted += 1
+    return {"inserted": inserted, "skipped_dupes": skipped, "total_seen": seen}
+
+
+def list_label_queue(
+    *,
+    status: str = "pending",
+    limit: Optional[int] = None,
+    db_path: Optional[Path | str] = None,
+) -> List[Dict[str, Any]]:
+    init_db(db_path)
+    with _lock:
+        with session_scope(db_path) as session:
+            stmt = select(LabelQueue).order_by(LabelQueue.id.desc())
+            if status and status != "all":
+                stmt = stmt.where(LabelQueue.status == status)
+            rows = session.scalars(stmt).all()
+            out = [_label_queue_to_dict(r) for r in rows]
+    if limit is not None and limit >= 0:
+        out = out[: int(limit)]
+    return out
+
+
+def _append_labeled_csv(row: Dict[str, Any], csv_path: Path | str = None) -> None:
+    dest = Path(csv_path) if csv_path is not None else LABELED_CSV_PATH
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not dest.exists() or dest.stat().st_size == 0
+    with dest.open("a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=LABELED_CSV_FIELDS, extrasaction="ignore")
+        if write_header:
+            writer.writeheader()
+        writer.writerow({k: row.get(k) for k in LABELED_CSV_FIELDS})
+
+
+def save_label(
+    queue_id: int,
+    label_severity: str,
+    *,
+    notes: Optional[str] = None,
+    db_path: Optional[Path | str] = None,
+    append_csv: bool = True,
+) -> Dict[str, Any]:
+    """Mark a queue item labeled; write alerts_labeled + optional CSV row."""
+    sev = (label_severity or "").strip().lower()
+    if sev not in VALID_LABEL_SEVERITIES:
+        raise ValueError(f"Invalid label_severity: {label_severity}")
+
+    init_db(db_path)
+    with _lock:
+        with session_scope(db_path) as session:
+            row = session.get(LabelQueue, int(queue_id))
+            if row is None:
+                raise KeyError(f"label_queue id {queue_id} not found")
+            if row.status != "pending":
+                raise ValueError(f"Queue item {queue_id} is already {row.status}")
+
+            now = _utc_now_iso()
+            row.status = "labeled"
+            row.label_severity = sev
+            row.labeled_at = now
+            if notes is not None:
+                row.notes = notes
+
+            summary = row.summary or row.full_log or ""
+            training = {
+                "timestamp": now,
+                "source_ip": "",
+                "username": "",
+                "event_type": f"wazuh_rule_{row.rule_id}" if row.rule_id else "wazuh_alert",
+                "severity": sev,
+                "description": summary,
+            }
+            # Best-effort IP/user extraction from text
+            try:
+                from nlp_utils import extract_ip, extract_user
+                text_blob = f"{row.full_log or ''} {row.summary or ''}"
+                training["source_ip"] = extract_ip(text_blob) or ""
+                training["username"] = extract_user(text_blob) or ""
+            except Exception:
+                pass
+
+            labeled = AlertsLabeled(
+                timestamp=training["timestamp"],
+                source_ip=training["source_ip"] or None,
+                username=training["username"] or None,
+                event_type=training["event_type"],
+                severity=sev,
+                description=training["description"],
+                label_source=row.source or "wazuh",
+                queue_id=row.id,
+                created_at=now,
+            )
+            session.add(labeled)
+            session.flush()
+            result = {
+                "ok": True,
+                "id": row.id,
+                "label_severity": sev,
+                "training_row": training,
+                "alerts_labeled_id": int(labeled.id),
+            }
+
+    if append_csv:
+        _append_labeled_csv(result["training_row"])
+    return result
+
+
+def skip_label(
+    queue_id: int,
+    *,
+    notes: Optional[str] = None,
+    db_path: Optional[Path | str] = None,
+) -> Dict[str, Any]:
+    init_db(db_path)
+    with _lock:
+        with session_scope(db_path) as session:
+            row = session.get(LabelQueue, int(queue_id))
+            if row is None:
+                raise KeyError(f"label_queue id {queue_id} not found")
+            if row.status != "pending":
+                raise ValueError(f"Queue item {queue_id} is already {row.status}")
+            row.status = "skipped"
+            row.labeled_at = _utc_now_iso()
+            if notes is not None:
+                row.notes = notes
+            return {"ok": True, "id": row.id, "status": "skipped"}
+
+
+def export_labeled_alerts_csv(
+    dest: Path | str = None,
+    *,
+    db_path: Optional[Path | str] = None,
+) -> int:
+    """Export alerts_labeled table to training CSV. Returns rows written."""
+    init_db(db_path)
+    dest = Path(dest) if dest is not None else LABELED_CSV_PATH
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with _lock:
+        with session_scope(db_path) as session:
+            rows = session.scalars(select(AlertsLabeled).order_by(AlertsLabeled.id.asc())).all()
+            records = [
+                {
+                    "timestamp": r.timestamp,
+                    "source_ip": r.source_ip or "",
+                    "username": r.username or "",
+                    "event_type": r.event_type or "",
+                    "severity": r.severity or "",
+                    "description": r.description or "",
+                }
+                for r in rows
+            ]
+    with dest.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=LABELED_CSV_FIELDS)
+        writer.writeheader()
+        for rec in records:
+            writer.writerow(rec)
+    return len(records)
+
+
+def label_queue_counts(db_path: Optional[Path | str] = None) -> Dict[str, int]:
+    init_db(db_path)
+    with _lock:
+        with session_scope(db_path) as session:
+            pending = int(
+                session.scalar(
+                    select(func.count()).select_from(LabelQueue).where(LabelQueue.status == "pending")
+                )
+                or 0
+            )
+            labeled = int(
+                session.scalar(
+                    select(func.count()).select_from(LabelQueue).where(LabelQueue.status == "labeled")
+                )
+                or 0
+            )
+            skipped = int(
+                session.scalar(
+                    select(func.count()).select_from(LabelQueue).where(LabelQueue.status == "skipped")
+                )
+                or 0
+            )
+            alerts_n = int(
+                session.scalar(select(func.count()).select_from(AlertsLabeled)) or 0
+            )
+    return {
+        "pending": pending,
+        "labeled": labeled,
+        "skipped": skipped,
+        "alerts_labeled": alerts_n,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------------
@@ -767,6 +1147,8 @@ EXPORT_FIELDS = [
     "rule_based",
     "ml_prediction",
     "ml_confidence",
+    "severity_source",
+    "ml_assist",
     "containment_decision",
     "containment_note",
 ]

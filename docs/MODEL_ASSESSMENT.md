@@ -81,6 +81,16 @@ On a tiny, synthetic-looking sample set, high accuracy is **not** evidence the m
 
 **Bottom line:** Live triage is a **rules + ML hybrid**. Rules are the safety net for critical TTPs and low-confidence ML.
 
+## Honest assist-only mode (current default)
+
+- Env: `ML_ASSIST_ONLY=true` (default) and `ML_CONFIDENCE_THRESHOLD` (default **0.70**).
+- Operator-facing **severity** and **recommendation** come from **rules** while assist-only is on.
+- ML prediction + confidence are **always stored** for analytics (`ml_prediction`, `ml_confidence`, `severity_source`, `ml_assist`).
+- UI shows **ML assist** with confidence %, or **Low confidence — not used** below threshold — never a bold wrong primary label.
+- Auto-containment still requires the agreement gate; ML alone never contains.
+- Grow live labels via the **Labeling** page, then retrain; only then consider turning `ML_ASSIST_ONLY=false` for cautious hybrid override.
+
+
 ---
 
 ## Production-ready?

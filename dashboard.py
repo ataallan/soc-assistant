@@ -23,7 +23,17 @@ from db import (
     export_triage_to_csv,
     get_db_path,
     get_storage_status,
+    insert_label_queue_items,
+    label_queue_counts,
+    list_label_queue,
     list_triage_events,
+    save_label,
+    skip_label,
+)
+from triage_engine import (
+    format_ml_assist_display,
+    get_ml_assist_only,
+    get_ml_confidence_threshold,
 )
 
 # -------------------------------------------------
@@ -245,7 +255,12 @@ def logout():
 @app.route("/")
 @login_required
 def home():
-    return render_template("index.html", user=session["user"])
+    return render_template(
+        "index.html",
+        user=session["user"],
+        ml_assist_only=get_ml_assist_only(),
+        ml_threshold=get_ml_confidence_threshold(),
+    )
 
 # -------------------------------------------------
 # TRAIN MODEL
@@ -253,8 +268,14 @@ def home():
 @app.route("/train-model", methods=["POST"])
 @login_required
 def train_model_route():
-    train_ml_model("data/sample_logs.csv")
-    return jsonify({"status": "Training complete"})
+    metrics = train_ml_model("data/sample_logs.csv", combine_labeled=True)
+    if not metrics:
+        return jsonify({"status": "Training failed", "ok": False}), 400
+    return jsonify({
+        "status": "Training complete",
+        "ok": True,
+        "metrics": metrics,
+    })
 
 # -------------------------------------------------
 # WATCHER THREADS
@@ -313,16 +334,46 @@ def stop_wazuh_watch():
 # -------------------------------------------------
 # REPORTS
 # -------------------------------------------------
+
+def enrich_triage_rows(rows):
+    """Attach honest ML assist display fields for templates."""
+    threshold = get_ml_confidence_threshold()
+    assist_only = get_ml_assist_only()
+    enriched = []
+    for row in rows or []:
+        r = dict(row)
+        ml_pred = r.get("ml_prediction")
+        try:
+            conf = float(r.get("ml_confidence") or 0.0)
+        except (TypeError, ValueError):
+            conf = 0.0
+        disp = format_ml_assist_display(
+            ml_pred, conf, threshold=threshold, assist_only=assist_only
+        )
+        r["ml_assist_label"] = disp["label"]
+        r["ml_confidence_pct"] = disp["confidence_pct"]
+        r["ml_low_confidence"] = disp["low_confidence"]
+        r["ml_used"] = disp["used"]
+        if r.get("severity_source") is None:
+            r["severity_source"] = "rules" if assist_only or disp["low_confidence"] else "ml"
+        if r.get("ml_assist") is None:
+            r["ml_assist"] = True if assist_only else (not disp["used"])
+        enriched.append(r)
+    return enriched
+
+
 @app.route("/report")
 @login_required
 def report():
     view, view_label = normalize_view(request.args.get("view"))
-    rows = list_triage_events(view=view)
+    rows = enrich_triage_rows(list_triage_events(view=view))
     return render_template(
         "report.html",
         rows=rows,
         view=view,
         view_label=view_label,
+        ml_assist_only=get_ml_assist_only(),
+        ml_threshold=get_ml_confidence_threshold(),
     )
 
 
@@ -428,6 +479,11 @@ def collect_health() -> dict:
         authenticated = False
         wazuh_error = f"Could not check Wazuh authentication: {exc}"
 
+    try:
+        labels = label_queue_counts()
+    except Exception:
+        labels = {"pending": 0, "labeled": 0, "skipped": 0, "alerts_labeled": 0}
+
     return {
         "storage": {
             "backend": storage.get("backend"),
@@ -444,6 +500,12 @@ def collect_health() -> dict:
             "csv": _watcher_running("csv"),
             "wazuh": _watcher_running("wazuh"),
         },
+        "ml": {
+            "assist_only": get_ml_assist_only(),
+            "confidence_threshold": get_ml_confidence_threshold(),
+            "note": "ML is assist-only until more live labels are trained.",
+        },
+        "labeling": labels,
     }
 
 
@@ -514,6 +576,162 @@ def notifications():
     }
     data.update(count_alerts())
     return jsonify(data)
+
+
+# -------------------------------------------------
+# LABELING (live Wazuh analyst queue)
+# -------------------------------------------------
+@app.route("/labels")
+@login_required
+def labels_page():
+    pending = list_label_queue(status="pending")
+    counts = label_queue_counts()
+    flash = session.pop("labels_flash", None)
+    return render_template(
+        "labels.html",
+        user=session.get("user"),
+        pending=pending,
+        counts=counts,
+        flash=flash,
+        ml_assist_only=get_ml_assist_only(),
+    )
+
+
+@app.route("/labels/pull", methods=["POST"])
+@login_required
+def labels_pull():
+    limit = 50
+    try:
+        if request.is_json and request.json:
+            limit = int(request.json.get("limit") or 50)
+        elif request.form.get("limit"):
+            limit = int(request.form.get("limit"))
+    except (TypeError, ValueError):
+        limit = 50
+    limit = max(1, min(limit, 200))
+
+    details = fetch_wazuh_alert_details(limit=limit) or []
+    items = []
+    for d in details:
+        items.append({
+            "summary": d.get("summary") or d.get("rule_description") or "",
+            "full_log": d.get("full_log") or d.get("summary") or "",
+            "agent": d.get("agent"),
+            "rule_id": d.get("rule_id"),
+            "rule_level": d.get("rule_level"),
+            "severity": d.get("severity"),
+            "wazuh_severity": d.get("severity"),
+            "source": "wazuh",
+        })
+    result = insert_label_queue_items(items, source="wazuh")
+    msg = (
+        f"Pulled {result.get('total_seen', 0)} Wazuh alerts; "
+        f"inserted {result.get('inserted', 0)} new; "
+        f"skipped {result.get('skipped_dupes', 0)} duplicates."
+    )
+    wants_json = (
+        request.is_json
+        or request.accept_mimetypes.best == "application/json"
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or request.args.get("format") == "json"
+    )
+    if wants_json:
+        return jsonify({"ok": True, "message": msg, **result})
+    session["labels_flash"] = {"ok": True, "message": msg}
+    return redirect("/labels")
+
+
+@app.route("/labels/save", methods=["POST"])
+@login_required
+def labels_save():
+    queue_id = request.form.get("id") or (request.json or {}).get("id")
+    severity = request.form.get("severity") or (request.json or {}).get("severity")
+    notes = request.form.get("notes") or (request.json or {}).get("notes")
+    try:
+        out = save_label(int(queue_id), severity, notes=notes)
+        msg = f"Labeled #{queue_id} as {severity}."
+        ok = True
+    except Exception as exc:
+        out = {"ok": False, "error": str(exc)}
+        msg = f"Could not label #{queue_id}: {exc}"
+        ok = False
+    wants_json = (
+        request.is_json
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or request.args.get("format") == "json"
+    )
+    if wants_json:
+        status = 200 if ok else 400
+        return jsonify({"ok": ok, "message": msg, **out}), status
+    session["labels_flash"] = {"ok": ok, "message": msg}
+    return redirect("/labels")
+
+
+@app.route("/labels/skip", methods=["POST"])
+@login_required
+def labels_skip():
+    queue_id = request.form.get("id") or (request.json or {}).get("id")
+    notes = request.form.get("notes") or (request.json or {}).get("notes")
+    try:
+        out = skip_label(int(queue_id), notes=notes)
+        msg = f"Skipped #{queue_id}."
+        ok = True
+    except Exception as exc:
+        out = {"ok": False, "error": str(exc)}
+        msg = f"Could not skip #{queue_id}: {exc}"
+        ok = False
+    wants_json = (
+        request.is_json
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or request.args.get("format") == "json"
+    )
+    if wants_json:
+        status = 200 if ok else 400
+        return jsonify({"ok": ok, "message": msg, **out}), status
+    session["labels_flash"] = {"ok": ok, "message": msg}
+    return redirect("/labels")
+
+
+@app.route("/labels/retrain", methods=["POST"])
+@login_required
+def labels_retrain():
+    """Retrain on sample_logs.csv + labeled_alerts.csv; return metrics toast/JSON."""
+    try:
+        metrics = train_ml_model(
+            "data/sample_logs.csv",
+            labeled_path="data/labeled_alerts.csv",
+            combine_labeled=True,
+        )
+        if not metrics:
+            payload = {"ok": False, "message": "Retrain failed — check training data."}
+            status = 400
+        else:
+            payload = {
+                "ok": True,
+                "message": (
+                    f"Retrain complete — {metrics.get('model')} · "
+                    f"CV macro F1={metrics.get('cv_macro_f1', 0):.3f} · "
+                    f"N={metrics.get('n_samples')}"
+                ),
+                "metrics": metrics,
+            }
+            status = 200
+    except Exception as exc:
+        payload = {"ok": False, "message": f"Retrain error: {exc}"}
+        status = 500
+
+    wants_json = (
+        request.is_json
+        or request.accept_mimetypes.best == "application/json"
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or request.args.get("format") == "json"
+        or True  # always JSON for toast UX
+    )
+    if wants_json:
+        return jsonify(payload), status
+    session["labels_flash"] = {"ok": payload["ok"], "message": payload["message"]}
+    return redirect("/labels")
+
 
 # -------------------------------------------------
 # RUN

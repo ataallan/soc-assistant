@@ -43,6 +43,8 @@ REPORT_FIELDS = [
     "rule_based",
     "ml_prediction",
     "ml_confidence",
+    "severity_source",
+    "ml_assist",
     "containment_decision",
     "containment_note",
 ]
@@ -391,6 +393,8 @@ def analyze_and_predict(log: str, event_type="", description="", username="", ti
         "ml_confidence": round(ml_confidence, 4) if ml_pred is not None else None,
         "rule_based": recommendation,
         "severity": severity,
+        "severity_source": result.get("severity_source") or "rules",
+        "ml_assist": bool(result.get("ml_assist", True)),
         "user": user,
         "ip": ip,
         "containment_decision": contain_reason if (did_contain or rule_severity in ("high", "critical") or recommendation == "escalate") else "n/a",

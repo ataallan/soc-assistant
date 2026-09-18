@@ -2,6 +2,13 @@
 {% block title %}Triage Report{% endblock %}
 
 {% block content %}
+{% if ml_assist_only %}
+<div class="notice-bar mb-3">
+  ML is <strong>assist-only</strong> until more live labels are trained.
+  Displayed severity comes from rules; ML appears as assist with confidence.
+</div>
+{% endif %}
+
 
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
     <div>
@@ -37,7 +44,7 @@
                         <th>Timestamp</th>
                         <th>Log</th>
                         <th>Severity</th>
-                        <th>ML Prediction</th>
+                        <th>ML Assist</th>
                         <th>Rule-Based</th>
                         <th>User</th>
                         <th>IP</th>
@@ -52,7 +59,24 @@
                             {{ row.log }}
                         </td>
                         <td>{{ row.severity }}</td>
-                        <td>{{ row.ml_prediction }}</td>
+                        <td>
+                            {% if row.ml_assist_label %}
+                              <span class="{% if row.ml_low_confidence %}text-secondary{% else %}text-info{% endif %}">
+                                {{ row.ml_assist_label }}
+                              </span>
+                            {% elif row.ml_prediction %}
+                              {% if row.ml_low_confidence or (row.ml_confidence is not none and row.ml_confidence < (ml_threshold or 0.7)) %}
+                                <span class="text-secondary">Low confidence — not used{% if row.ml_confidence is not none %} ({{ (row.ml_confidence * 100)|round|int }}%){% endif %}</span>
+                              {% else %}
+                                <span class="text-info">ML assist: {{ row.ml_prediction }}{% if row.ml_confidence is not none %} ({{ (row.ml_confidence * 100)|round|int }}%){% endif %}</span>
+                              {% endif %}
+                            {% else %}
+                              <span class="text-secondary">ML unavailable</span>
+                            {% endif %}
+                            {% if row.severity_source %}
+                              <div class="small text-secondary">source: {{ row.severity_source }}</div>
+                            {% endif %}
+                        </td>
                         <td>{{ row.rule_based }}</td>
                         <td>{{ row.user }}</td>
                         <td>{{ row.ip }}</td>

@@ -133,24 +133,55 @@ def select_best_estimator(X, y):
     return best_name, best_est, best_score
 
 
+def load_training_frame(
+    sample_path: str = "data/sample_logs.csv",
+    labeled_path: str = "data/labeled_alerts.csv",
+) -> pd.DataFrame:
+    """Combine base sample logs with analyst-labeled alerts (same training columns)."""
+    cols = ["timestamp", "source_ip", "username", "event_type", "severity", "description"]
+    frames = []
+    for path in (sample_path, labeled_path):
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            part = pd.read_csv(path)
+        except Exception as exc:
+            print(f"⚠️ Could not read {path}: {exc}")
+            continue
+        for c in cols:
+            if c not in part.columns:
+                part[c] = ""
+        frames.append(part[cols])
+    if not frames:
+        return pd.DataFrame(columns=cols)
+    return pd.concat(frames, ignore_index=True)
+
+
 def train_ml_model(
     file_path="data/sample_logs.csv",
     model_file=MODEL_FILE,
     vectorizer_file=VECTORIZER_FILE,
     scaler_file=SCALER_FILE,
     label_encoder_file=LABEL_ENCODER_FILE,
+    labeled_path: str | None = "data/labeled_alerts.csv",
+    combine_labeled: bool = True,
 ):
-    if not os.path.exists(file_path):
-        print(f"⚠️ File not found: {file_path}")
-        return
-
-    df = pd.read_csv(file_path)
+    """Train severity model. Returns metrics dict (or None on hard failure)."""
+    if combine_labeled and labeled_path:
+        df = load_training_frame(file_path, labeled_path)
+        if df.empty and os.path.exists(file_path):
+            df = pd.read_csv(file_path)
+    else:
+        if not os.path.exists(file_path):
+            print(f"⚠️ File not found: {file_path}")
+            return None
+        df = pd.read_csv(file_path)
 
     required_columns = ["event_type", "description", "username", "severity", "timestamp", "source_ip"]
     for col in required_columns:
         if col not in df.columns:
             print(f"⚠️ CSV must contain '{col}' column.")
-            return
+            return None
 
     df["severity"] = df["severity"].fillna("unknown").astype(str)
     label_encoder = LabelEncoder()
@@ -191,12 +222,35 @@ def train_ml_model(
     joblib.dump(scaler_full, scaler_file)
     joblib.dump(label_encoder, label_encoder_file)
 
+    report_text = classification_report(
+        y_test,
+        y_pred,
+        target_names=label_encoder.classes_,
+        zero_division=0,
+        output_dict=True,
+    )
     print(f"\n✅ Best model ({best_name}) refit on full data and saved: {model_file}")
     print(f"✅ Vectorizer saved: {vectorizer_file}")
     print(f"✅ Scaler saved: {scaler_file}")
     print(f"✅ Label encoder saved: {label_encoder_file}")
     print("ℹ️ For honest hold-out metrics, run: python evaluate_model.py")
     print(f"ℹ️ CV macro F1 during selection: {cv_f1:.3f} (N={len(df)}; not production-ready)")
+
+    return {
+        "ok": True,
+        "model": best_name,
+        "cv_macro_f1": float(cv_f1),
+        "n_samples": int(len(df)),
+        "classes": list(label_encoder.classes_),
+        "holdout_macro_f1": float(report_text.get("macro avg", {}).get("f1-score") or 0.0),
+        "holdout_accuracy": float(report_text.get("accuracy") or 0.0),
+        "artifacts": {
+            "model": model_file,
+            "vectorizer": vectorizer_file,
+            "scaler": scaler_file,
+            "label_encoder": label_encoder_file,
+        },
+    }
 
 
 def _clone_fresh(name: str):

@@ -116,7 +116,35 @@
         Start or stop watchers from the Home console.
       </p>
     </div>
+  
+  <div class="col-lg-4">
+    <div class="soc-panel h-100">
+      <h4 class="mb-3" style="font-size:1.05rem;letter-spacing:-0.02em;">
+        <i class="bi bi-cpu me-1"></i> ML mode
+      </h4>
+      <dl class="row mb-0 small">
+        <dt class="col-5 text-secondary">Mode</dt>
+        <dd class="col-7">
+          {% if health.ml and health.ml.assist_only %}
+          <span class="status-chip idle"><span class="dot"></span> Assist-only</span>
+          {% else %}
+          <span class="status-chip running"><span class="dot"></span> Override allowed</span>
+          {% endif %}
+        </dd>
+        <dt class="col-5 text-secondary">Threshold</dt>
+        <dd class="col-7">{{ '%.0f'|format(((health.ml.confidence_threshold if health.ml else 0.7) or 0.7) * 100) }}%</dd>
+        <dt class="col-5 text-secondary">Note</dt>
+        <dd class="col-7 text-secondary">{{ health.ml.note if health.ml else 'ML is assist-only until more live labels are trained.' }}</dd>
+      </dl>
+      <p class="text-secondary small mt-3 mb-0">
+        Label queue:
+        {{ health.labeling.pending if health.labeling else 0 }} pending ·
+        {{ health.labeling.labeled if health.labeling else 0 }} labeled.
+        <a href="/labels">Open Labeling</a>
+      </p>
+    </div>
   </div>
+
 </div>
 
 {% endblock %}

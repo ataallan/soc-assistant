@@ -27,6 +27,131 @@ def get_ml_confidence_threshold() -> float:
 # Back-compat module attribute (tests / callers may read it).
 ML_CONFIDENCE_THRESHOLD = get_ml_confidence_threshold()
 
+
+def get_ml_assist_only() -> bool:
+    """Read ML_ASSIST_ONLY from env; default True (honest assist-only mode)."""
+    raw = os.environ.get("ML_ASSIST_ONLY", "true")
+    if raw is None:
+        return True
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+ML_ASSIST_ONLY = get_ml_assist_only()
+
+
+def resolve_display_severity(
+    rule_severity: str,
+    ml_severity=None,
+    ml_confidence: float = 0.0,
+    *,
+    threshold: float = None,
+    assist_only: bool = None,
+) -> dict:
+    """Choose operator-facing severity and honesty metadata.
+
+    Policy:
+    - Always keep ML prediction + confidence for analytics (caller stores them).
+    - Rules ``critical`` always wins for displayed severity.
+    - If ``assist_only`` (default) OR confidence < threshold OR ML missing:
+      displayed severity = rules; ``severity_source=rules``; ``ml_assist=True``.
+    - Else (override mode with confident ML): displayed = ML;
+      ``severity_source=ml`` (or ``hybrid`` when equal to rules).
+    """
+    if threshold is None:
+        threshold = get_ml_confidence_threshold()
+    if assist_only is None:
+        assist_only = get_ml_assist_only()
+
+    rule_sev = (rule_severity or "low").strip().lower()
+    ml_sev = None if ml_severity is None else str(ml_severity).strip().lower()
+    try:
+        conf = float(ml_confidence or 0.0)
+    except (TypeError, ValueError):
+        conf = 0.0
+
+    if rule_sev == "critical":
+        source = "rules"
+        if ml_sev == "critical" and conf >= float(threshold) and not assist_only:
+            source = "hybrid"
+        return {
+            "severity": "critical",
+            "severity_source": source,
+            "ml_assist": True if assist_only else (source != "ml"),
+            "ml_used_for_display": False if assist_only or source == "rules" else True,
+            "low_confidence": conf < float(threshold) if ml_sev is not None else True,
+        }
+
+    low_conf = ml_sev is None or conf < float(threshold)
+    if assist_only or low_conf:
+        return {
+            "severity": rule_sev,
+            "severity_source": "rules",
+            "ml_assist": True,
+            "ml_used_for_display": False,
+            "low_confidence": True if ml_sev is None else low_conf,
+        }
+
+    source = "hybrid" if ml_sev == rule_sev else "ml"
+    return {
+        "severity": ml_sev,
+        "severity_source": source,
+        "ml_assist": False,
+        "ml_used_for_display": True,
+        "low_confidence": False,
+    }
+
+
+def format_ml_assist_display(
+    ml_severity=None,
+    ml_confidence: float = 0.0,
+    *,
+    threshold: float = None,
+    assist_only: bool = None,
+) -> dict:
+    """UI-facing ML assist label (never a bold wrong primary severity).
+
+    Returns: label, confidence_pct, used, low_confidence, assist_only, ml_severity.
+    """
+    if threshold is None:
+        threshold = get_ml_confidence_threshold()
+    if assist_only is None:
+        assist_only = get_ml_assist_only()
+
+    try:
+        conf = float(ml_confidence or 0.0)
+    except (TypeError, ValueError):
+        conf = 0.0
+    pct = int(round(max(0.0, min(1.0, conf)) * 100))
+    ml_sev = None if ml_severity is None else str(ml_severity).strip().lower()
+
+    if ml_sev is None:
+        return {
+            "label": "ML unavailable",
+            "confidence_pct": 0,
+            "used": False,
+            "low_confidence": True,
+            "assist_only": bool(assist_only),
+            "ml_severity": None,
+        }
+
+    low = conf < float(threshold)
+    if low:
+        label = f"Low confidence — not used ({pct}%)"
+        used = False
+    else:
+        label = f"ML assist: {ml_sev} ({pct}%)"
+        used = not assist_only
+
+    return {
+        "label": label,
+        "confidence_pct": pct,
+        "used": used,
+        "low_confidence": low,
+        "assist_only": bool(assist_only),
+        "ml_severity": ml_sev,
+    }
+
+
 # -------------------- Helper Functions --------------------
 
 def load_ml_model():
@@ -144,10 +269,13 @@ def ml_predict_severity(event_type="", description="", username="", timestamp=No
 def analyze_log(log: str, event_type="", description="", username="", timestamp=None, source_ip="") -> dict:
     """Returns structured analysis: log, ip, user, severity, recommendation.
 
-    Hybrid policy (small, safety-oriented):
+    Honest assist-only policy (default ``ML_ASSIST_ONLY=true``):
+    - Rules severity/recommendation are the primary operator-facing fields.
+    - ML prediction + confidence are always computed for analytics.
+    - If assist-only OR confidence < threshold: ML does not override displayed severity.
     - Rules saying ``critical`` always win.
-    - If ML is missing or confidence < threshold, use rule severity.
-    - Otherwise use ML severity.
+    - When assist-only is disabled and confidence is high, ML may set displayed severity
+      (``severity_source`` = ml|hybrid).
     """
 
     try:
@@ -165,14 +293,21 @@ def analyze_log(log: str, event_type="", description="", username="", timestamp=
         event_type, description, username, timestamp, ip
     )
 
-    if rule_severity == "critical":
-        severity = "critical"
-    elif ml_severity is None or ml_confidence < get_ml_confidence_threshold():
-        severity = rule_severity
-    else:
-        severity = ml_severity
-
-    recommendation = rule_based_triage(log)
+    resolved = resolve_display_severity(
+        rule_severity,
+        ml_severity,
+        ml_confidence,
+        threshold=get_ml_confidence_threshold(),
+        assist_only=get_ml_assist_only(),
+    )
+    severity = resolved["severity"]
+    recommendation = rule_based_triage(log)  # always rules-based
+    ml_display = format_ml_assist_display(
+        ml_severity,
+        ml_confidence,
+        threshold=get_ml_confidence_threshold(),
+        assist_only=get_ml_assist_only(),
+    )
 
     return {
         "log": log,
@@ -183,6 +318,11 @@ def analyze_log(log: str, event_type="", description="", username="", timestamp=
         "ml_confidence": ml_confidence,
         "ml_severity": ml_severity,
         "rule_severity": rule_severity,
+        "severity_source": resolved["severity_source"],
+        "ml_assist": resolved["ml_assist"],
+        "ml_display_label": ml_display["label"],
+        "ml_used_for_display": resolved["ml_used_for_display"],
+        "low_confidence": resolved["low_confidence"],
     }
 
 

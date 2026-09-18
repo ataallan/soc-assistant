@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}Labeling{% endblock %}
+
+{% block content %}
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+  <div>
+    <h1 class="page-title">Live Labeling</h1>
+    <p class="page-subtitle">Pull Wazuh alerts, assign analyst severity, then retrain the assist model.</p>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    <form method="POST" action="/labels/pull" class="d-inline">
+      <button type="submit" class="btn btn-primary btn-sm">
+        <i class="bi bi-cloud-download me-1"></i> Pull from Wazuh
+      </button>
+    </form>
+    <button type="button" id="btnRetrain" class="btn btn-success btn-sm">
+      <i class="bi bi-cpu me-1"></i> Retrain model
+    </button>
+  </div>
+</div>
+
+{% if flash %}
+<div class="notice-bar mb-3 {% if not flash.ok %}border-danger{% endif %}">
+  {{ flash.message }}
+</div>
+{% endif %}
+
+<div class="notice-bar mb-3">
+  ML remains <strong>assist-only</strong> until enough live labels are trained.
+  Operator-facing severity stays rules-based; labeled rows improve future assist confidence.
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="soc-panel text-center py-3">
+      <div class="text-secondary small">Pending</div>
+      <div class="fs-4 fw-semibold">{{ counts.pending if counts else 0 }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="soc-panel text-center py-3">
+      <div class="text-secondary small">Labeled</div>
+      <div class="fs-4 fw-semibold">{{ counts.labeled if counts else 0 }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="soc-panel text-center py-3">
+      <div class="text-secondary small">Skipped</div>
+      <div class="fs-4 fw-semibold">{{ counts.skipped if counts else 0 }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="soc-panel text-center py-3">
+      <div class="text-secondary small">Training rows</div>
+      <div class="fs-4 fw-semibold">{{ counts.alerts_labeled if counts else 0 }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="soc-panel">
+  <h4 class="mb-3" style="font-size:1.05rem;">Pending queue</h4>
+  {% if pending %}
+  <div class="table-scroll">
+    <table class="table table-bordered table-striped mb-0 align-middle">
+      <thead>
+        <tr>
+          <th style="width:4rem;">ID</th>
+          <th>Alert</th>
+          <th style="width:8rem;">Wazuh</th>
+          <th style="width:18rem;">Analyst label</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in pending %}
+        <tr>
+          <td class="text-secondary">#{{ item.id }}</td>
+          <td style="max-width:520px;white-space:normal;">
+            <div class="fw-medium mb-1">{{ item.summary or item.full_log }}</div>
+            <div class="text-secondary small">
+              {% if item.agent %}<span class="me-2">Agent: {{ item.agent }}</span>{% endif %}
+              {% if item.rule_id %}<span class="me-2">Rule: {{ item.rule_id }}</span>{% endif %}
+              {% if item.rule_level %}<span>Level: {{ item.rule_level }}</span>{% endif %}
+            </div>
+          </td>
+          <td>
+            <span class="badge text-bg-secondary">{{ item.wazuh_severity or 'n/a' }}</span>
+          </td>
+          <td>
+            <form method="POST" action="/labels/save" class="d-flex flex-wrap gap-1 align-items-center">
+              <input type="hidden" name="id" value="{{ item.id }}">
+              <select name="severity" class="form-select form-select-sm" style="width:7.5rem;" required>
+                <option value="" disabled selected>Severity</option>
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+                <option value="critical">critical</option>
+              </select>
+              <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
+            </form>
+            <form method="POST" action="/labels/skip" class="mt-1">
+              <input type="hidden" name="id" value="{{ item.id }}">
+              <button type="submit" class="btn btn-sm btn-outline-secondary">Skip</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-secondary mb-0">
+    No pending items. Click <strong>Pull from Wazuh</strong> to enqueue recent alerts
+    (requires Wazuh API credentials in <code>.env</code>).
+  </p>
+  {% endif %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById("btnRetrain")?.addEventListener("click", async () => {
+  const btn = document.getElementById("btnRetrain");
+  btn.disabled = true;
+  try {
+    const res = await fetch("/labels/retrain", {
+      method: "POST",
+      headers: { "X-Requested-With": "XMLHttpRequest", "Accept": "application/json" },
+    });
+    const data = await res.json();
+    if (typeof showToast === "function") {
+      showToast(data.message || (data.ok ? "Retrain complete" : "Retrain failed"), data.ok ? "success" : "error");
+    } else {
+      alert(data.message || JSON.stringify(data));
+    }
+  } catch (e) {
+    if (typeof showToast === "function") showToast("Retrain request failed", "error");
+    else alert("Retrain request failed");
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+{% endblock %}

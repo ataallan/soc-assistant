@@ -95,6 +95,15 @@
     </div>
 </div>
 
+{% if ml_assist_only %}
+<div class="notice-bar mb-4">
+  <i class="bi bi-info-circle me-1"></i>
+  ML is assist-only until more live labels are trained
+  (threshold {{ '%.0f'|format((ml_threshold or 0.7) * 100) }}% confidence).
+  <a href="/labels" class="ms-1">Open Labeling →</a>
+</div>
+{% endif %}
+
 <!-- KPI tiles (clickable → filtered triage details) -->
 <div class="kpi-row mb-4" role="navigation" aria-label="Alert detail views">
     <a href="/report?view=total" class="kpi-tile" title="Open all alert details" aria-label="Total alerts — view details">
