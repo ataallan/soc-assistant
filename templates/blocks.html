@@ -13,8 +13,10 @@
 
 <div class="notice-bar">
   {{ containment_notice or "Containment actions are recorded in this console for demonstration. They do not change production network controls." }}
-  {% if containment_mode == "stub" and not can_execute_containment %}
-  <div class="mt-2 small text-warning">Stub-mode execute is admin-only. Analysts can view the list and open cases.</div>
+  {% if requires_live_confirm and not can_execute_containment %}
+  <div class="mt-2 small text-warning">Integrated response execute is admin-only. Analysts can view the list and open cases.</div>
+  {% elif requires_live_confirm %}
+  <div class="mt-2 small text-secondary">Live responses use a two-step flow: Preview response, then Confirm live response.</div>
   {% endif %}
 </div>
 
@@ -28,11 +30,18 @@
           <li class="list-group-item d-flex justify-content-between align-items-center">
             <code>{{ ip }}</code>
             {% if can_execute_containment %}
-            <form method="POST" action="/unblock" class="m-0">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="hidden" name="target" value="{{ ip }}">
-              <button class="btn btn-outline-danger btn-sm">Unblock</button>
-            </form>
+              {% if requires_live_confirm %}
+              <button type="button" class="btn btn-outline-danger btn-sm"
+                      data-contain-action="unblock" data-contain-type="ip" data-contain-target="{{ ip }}">
+                Unblock
+              </button>
+              {% else %}
+              <form method="POST" action="/unblock" class="m-0">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="target" value="{{ ip }}">
+                <button class="btn btn-outline-danger btn-sm">Unblock</button>
+              </form>
+              {% endif %}
             {% endif %}
           </li>
           {% else %}
@@ -41,13 +50,23 @@
         </ul>
       </div>
       {% if can_execute_containment %}
-      <form method="POST" action="/block/ip" class="d-flex gap-2">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <input type="text" name="ip" class="form-control" placeholder="IP address" required>
-        <button class="btn btn-primary">Block IP</button>
-      </form>
+        {% if requires_live_confirm %}
+        <div class="d-flex gap-2">
+          <input type="text" id="blockIpInput" class="form-control" placeholder="IP address" required>
+          <button type="button" class="btn btn-primary text-nowrap"
+                  data-contain-action="block" data-contain-type="ip" data-contain-from="#blockIpInput">
+            Preview response
+          </button>
+        </div>
+        {% else %}
+        <form method="POST" action="/block/ip" class="d-flex gap-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="text" name="ip" class="form-control" placeholder="IP address" required>
+          <button class="btn btn-primary">Block IP</button>
+        </form>
+        {% endif %}
       {% else %}
-      <p class="text-secondary small mb-0">View only — stub containment execute requires admin.</p>
+      <p class="text-secondary small mb-0">View only — integrated response execute requires admin.</p>
       {% endif %}
     </div>
   </div>
@@ -61,11 +80,18 @@
           <li class="list-group-item d-flex justify-content-between align-items-center">
             <span>{{ user }}</span>
             {% if can_execute_containment %}
-            <form method="POST" action="/unblock" class="m-0">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="hidden" name="target" value="{{ user }}">
-              <button class="btn btn-outline-danger btn-sm">Unblock</button>
-            </form>
+              {% if requires_live_confirm %}
+              <button type="button" class="btn btn-outline-danger btn-sm"
+                      data-contain-action="unblock" data-contain-type="user" data-contain-target="{{ user }}">
+                Unblock
+              </button>
+              {% else %}
+              <form method="POST" action="/unblock" class="m-0">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="target" value="{{ user }}">
+                <button class="btn btn-outline-danger btn-sm">Unblock</button>
+              </form>
+              {% endif %}
             {% endif %}
           </li>
           {% else %}
@@ -74,14 +100,161 @@
         </ul>
       </div>
       {% if can_execute_containment %}
-      <form method="POST" action="/block/user" class="d-flex gap-2">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <input type="text" name="user" class="form-control" placeholder="Username" required>
-        <button class="btn btn-primary">Block user</button>
-      </form>
+        {% if requires_live_confirm %}
+        <div class="d-flex gap-2">
+          <input type="text" id="blockUserInput" class="form-control" placeholder="Username" required>
+          <button type="button" class="btn btn-primary text-nowrap"
+                  data-contain-action="block" data-contain-type="user" data-contain-from="#blockUserInput">
+            Preview response
+          </button>
+        </div>
+        {% else %}
+        <form method="POST" action="/block/user" class="d-flex gap-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="text" name="user" class="form-control" placeholder="Username" required>
+          <button class="btn btn-primary">Block user</button>
+        </form>
+        {% endif %}
       {% endif %}
     </div>
   </div>
 </div>
 
+{% if requires_live_confirm and can_execute_containment %}
+<!-- Preview / confirm modal for integrated response mode -->
+<div class="modal fade" id="containPreviewModal" tabindex="-1" aria-labelledby="containPreviewTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="background:#0f172a;border:1px solid rgba(148,163,184,0.25);color:#e2e8f0;">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title" id="containPreviewTitle">Preview response</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-secondary small mb-3">Review the intended live response before confirming. No request is sent until you confirm.</p>
+        <dl class="row mb-0 small" id="containPreviewBody">
+          <dt class="col-4 text-secondary">Action</dt><dd class="col-8" id="pvAction">—</dd>
+          <dt class="col-4 text-secondary">Target</dt><dd class="col-8"><code id="pvTarget">—</code></dd>
+          <dt class="col-4 text-secondary">Mode</dt><dd class="col-8" id="pvMode">—</dd>
+          <dt class="col-4 text-secondary">Endpoint</dt><dd class="col-8 text-break" id="pvUrl">—</dd>
+          <dt class="col-4 text-secondary">Body</dt><dd class="col-8"><pre class="mb-0 small" id="pvBody" style="white-space:pre-wrap;">—</pre></dd>
+        </dl>
+        <div id="pvDenied" class="alert alert-warning mt-3 mb-0 d-none py-2 small">You are not allowed to confirm this live response.</div>
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" id="containConfirmBtn">Confirm live response</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+{% if requires_live_confirm and can_execute_containment %}
+<script>
+(function () {
+  const modalEl = document.getElementById("containPreviewModal");
+  if (!modalEl) return;
+  const modal = new bootstrap.Modal(modalEl);
+  let pending = null;
+
+  function setText(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value == null || value === "" ? "—" : String(value);
+  }
+
+  async function runPreview(action, targetType, target) {
+    const resp = await fetch("/blocks/preview", {
+      method: "POST",
+      headers: csrfHeaders({
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+      }),
+      body: JSON.stringify({ action, target_type: targetType, target }),
+    });
+    const data = await resp.json();
+    pending = data;
+    setText("pvAction", (data.action || action) + " " + (data.target_type || targetType));
+    setText("pvTarget", data.target || target);
+    setText("pvMode", data.mode_label || data.mode || "");
+    setText("pvUrl", data.would_call_url || "(log only — no URL configured)");
+    const body = data.body_summary || {};
+    document.getElementById("pvBody").textContent = JSON.stringify(body, null, 2);
+    const denied = document.getElementById("pvDenied");
+    const confirmBtn = document.getElementById("containConfirmBtn");
+    if (data.allowed === false) {
+      denied.classList.remove("d-none");
+      confirmBtn.disabled = true;
+    } else {
+      denied.classList.add("d-none");
+      confirmBtn.disabled = false;
+    }
+    modal.show();
+  }
+
+  document.querySelectorAll("[data-contain-action]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const action = btn.getAttribute("data-contain-action");
+      const targetType = btn.getAttribute("data-contain-type");
+      let target = btn.getAttribute("data-contain-target") || "";
+      const fromSel = btn.getAttribute("data-contain-from");
+      if (fromSel) {
+        const input = document.querySelector(fromSel);
+        target = (input && input.value || "").trim();
+        if (!target) {
+          if (typeof showToast === "function") showToast("Enter a target first.", "error");
+          else alert("Enter a target first.");
+          return;
+        }
+      }
+      try {
+        await runPreview(action, targetType, target);
+      } catch (e) {
+        if (typeof showToast === "function") showToast("Preview failed.", "error");
+        else alert("Preview failed.");
+      }
+    });
+  });
+
+  document.getElementById("containConfirmBtn").addEventListener("click", async () => {
+    if (!pending || !pending.allowed) return;
+    const confirmBtn = document.getElementById("containConfirmBtn");
+    confirmBtn.disabled = true;
+    try {
+      const resp = await fetch("/blocks/execute", {
+        method: "POST",
+        headers: csrfHeaders({
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+        }),
+        body: JSON.stringify({
+          action: pending.action,
+          target_type: pending.target_type,
+          target: pending.target,
+          confirm: 1,
+        }),
+      });
+      const data = await resp.json();
+      modal.hide();
+      if (typeof showToast === "function") {
+        showToast(data.message || (data.ok ? "Live response applied." : "Live response failed."), data.ok ? "success" : "error");
+      }
+      if (data.ok) {
+        setTimeout(() => { window.location.reload(); }, 600);
+      } else {
+        confirmBtn.disabled = false;
+      }
+    } catch (e) {
+      confirmBtn.disabled = false;
+      if (typeof showToast === "function") showToast("Confirm failed.", "error");
+    }
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}

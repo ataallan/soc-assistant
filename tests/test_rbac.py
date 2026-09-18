@@ -118,45 +118,97 @@ def test_admin_email_case_insensitive_login_role(rbac_client):
     assert "role-admin" in body or ">admin<" in body.lower()
 
 
-def test_stub_containment_execute_admin_only(tmp_path, monkeypatch):
+def _stub_dashboard_client(tmp_path, monkeypatch, mode="stub"):
     db_path = tmp_path / "stub_soc.db"
     monkeypatch.setenv("SOC_DB_PATH", str(db_path))
     monkeypatch.delenv("SOC_DATABASE_URL", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("SECRET_KEY", "test-secret")
     monkeypatch.setenv("SOC_ADMIN_EMAILS", "admin@example.com")
-    monkeypatch.setenv("CONTAINMENT_MODE", "stub")
+    monkeypatch.setenv("CONTAINMENT_MODE", mode)
+    monkeypatch.delenv("CONTAINMENT_STUB_URL", raising=False)
+    monkeypatch.delenv("CONTAINMENT_STUB_TOKEN", raising=False)
 
     import db
     import importlib
     import dashboard
+    import containment
 
     db.reset_connection()
     db.init_db(db_path)
+    containment._db_ready = True
     importlib.reload(dashboard)
     dashboard.app.config["TESTING"] = True
     dashboard.app.config["WTF_CSRF_ENABLED"] = False
-    client = dashboard.app.test_client()
+    return dashboard.app.test_client(), dashboard, db_path
+
+
+def test_stub_containment_execute_admin_only(tmp_path, monkeypatch):
+    client, dashboard, _ = _stub_dashboard_client(tmp_path, monkeypatch, "stub")
 
     with client.session_transaction() as sess:
         sess["user"] = "analyst@example.com"
 
+    resp = client.post(
+        "/blocks/execute",
+        json={"action": "block", "target_type": "ip", "target": "203.0.113.10", "confirm": 1},
+        headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 403
+
+    # Legacy route also denies analyst
     resp = client.post(
         "/block/ip",
         data={"ip": "203.0.113.10"},
         headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"},
         follow_redirects=False,
     )
-    # JSON-ish want → 403
     assert resp.status_code == 403
 
     with client.session_transaction() as sess:
         sess["user"] = "admin@example.com"
 
-    with patch.object(dashboard, "execute_block_ip") as mock_block:
-        resp = client.post("/block/ip", data={"ip": "203.0.113.10"}, follow_redirects=False)
-    assert resp.status_code in (302, 200)
-    mock_block.assert_called_once()
+    # Missing confirm → 400
+    resp = client.post(
+        "/blocks/execute",
+        json={"action": "block", "target_type": "ip", "target": "203.0.113.10"},
+        headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"},
+    )
+    assert resp.status_code == 400
+    assert resp.get_json().get("requires_confirm") is True
+
+    with patch.object(dashboard, "execute_confirmed", return_value={"ok": True, "message": "ok"}) as mock_exec:
+        resp = client.post(
+            "/blocks/execute",
+            json={
+                "action": "block",
+                "target_type": "ip",
+                "target": "203.0.113.10",
+                "confirm": 1,
+            },
+            headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 200
+    mock_exec.assert_called_once_with("block", "ip", "203.0.113.10", confirm=True)
+
+
+def test_blocks_preview_json_for_analyst(tmp_path, monkeypatch):
+    client, _, _ = _stub_dashboard_client(tmp_path, monkeypatch, "live")
+
+    with client.session_transaction() as sess:
+        sess["user"] = "analyst@example.com"
+
+    resp = client.post(
+        "/blocks/preview",
+        json={"action": "block", "target_type": "ip", "target": "192.0.2.1"},
+        headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"},
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["allowed"] is False
+    assert data["requires_confirm"] is True
 
 
 def test_security_headers_present(rbac_client):

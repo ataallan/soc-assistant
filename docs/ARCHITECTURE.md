@@ -62,7 +62,7 @@ flowchart LR
 | `soc_triage_cli.py` | CLI: train, watch CSV/Wazuh, report, unblock |
 | `wazuh_integration.py` | JWT auth, endpoint probe/cache, structured alerts |
 | `dashboard.py` | Login + email OTP, watchers, reports, Wazuh table |
-| `containment.py` | Block/unblock with `simulated` / `dry_run` / `stub` modes + SQLite audit |
+| `containment.py` | Block/unblock with `simulated` / `dry_run` / `stub`/`live` + preview→confirm + SQLite audit |
 | `db.py` | SQLite schema, migration, export helpers |
 | `templates/` | UI pages |
 | `data/sample_logs.csv` | Labeled demo dataset |
@@ -70,19 +70,19 @@ flowchart LR
 
 ## Containment modes
 
-Set `CONTAINMENT_MODE` in `.env`:
+Set `CONTAINMENT_MODE` in `.env`. Full operator guide: [CONTAINMENT.md](CONTAINMENT.md).
 
 | Mode | Behavior |
 | --- | --- |
-| `simulated` (default) | Update SQLite `containment_blocks` only |
-| `dry_run` | Append SQLite `containment_audit` only — no list changes |
-| `stub` | Optional POST to `CONTAINMENT_STUB_URL`, then update SQLite |
+| `simulated` (default) | One-click update of SQLite `containment_blocks` only |
+| `dry_run` | Append SQLite `containment_audit` only — no list changes (UI: Preview mode) |
+| `stub` / `live` | Admin preview → confirm; optional POST to `CONTAINMENT_STUB_URL` (+ optional Bearer `CONTAINMENT_STUB_TOKEN`), then SQLite |
 
-None of these are a production firewall unless you intentionally point `stub` at a real control-plane API.
+None of these are a production firewall unless you intentionally point `stub`/`live` at a real control-plane API.
 
 ## Containment note (scope)
 
-**Block / unblock** updates local JSON (`blocked_entities.json`). It is **simulated containment** for the capstone demo, not a live firewall or EDR action, unless you later wire a real control-plane API (ideally with a dry-run mode).
+Default **simulation** records decisions in SQLite for the capstone demo. Integrated mode can POST to a lab webhook or local echo stub after **admin confirmation** — still not an unattended production firewall.
 
 ## Security notes
 

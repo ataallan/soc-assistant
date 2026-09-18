@@ -21,8 +21,9 @@ Matching is **case-insensitive** against the login username/email. Users not in 
 | View containment block list | yes | yes |
 | Train / retrain ML model | no | yes |
 | SQLite backup | no | yes |
-| Stub-mode containment execute (block/unblock) | no | yes |
-| Simulated/dry-run containment execute | yes | yes |
+| Integrated (stub/live) containment preview | yes | yes |
+| Integrated (stub/live) containment execute (confirm required) | no | yes |
+| Simulated / preview-mode containment execute | yes | yes |
 
 The navbar shows a role chip (`admin` / `analyst`). Admin-only buttons are hidden for analysts; the server still returns **403** (JSON) or a redirect + toast if called directly.
 

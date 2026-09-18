@@ -13,7 +13,18 @@ load_dotenv()
 
 from flask_wtf.csrf import CSRFProtect
 
-from containment import get_mode, get_mode_label, get_ui_notice, load_blocked
+from containment import (
+    execute_confirmed,
+    get_mode,
+    get_mode_label,
+    get_ui_notice,
+    is_integration_mode,
+    load_blocked,
+    preview_block_ip,
+    preview_block_user,
+    preview_unblock_ip,
+    preview_unblock_user,
+)
 from rbac import ROLE_ADMIN, role_for_identity
 from report_filters import (
     compute_alert_counts,
@@ -226,16 +237,43 @@ def require_admin(f):
 
 
 def _deny_stub_containment_if_analyst():
-    """Live stub containment execute is admin-only; analysts may still view blocks."""
-    if get_mode() != "stub":
+    """Live/stub containment execute is admin-only; analysts may still view blocks."""
+    if not is_integration_mode():
         return None
     if current_role() == ROLE_ADMIN:
         return None
-    msg = "Admin role required to execute containment in stub mode."
+    msg = "Admin role required to execute containment in integrated response mode."
     if _wants_json():
         return jsonify({"ok": False, "status": "Forbidden", "message": msg}), 403
     session["auth_flash"] = {"ok": False, "message": msg}
     return redirect("/blocks")
+
+
+def _request_confirm_flag() -> bool:
+    """True when form/JSON includes confirm=1 (or true/yes)."""
+    raw = None
+    if request.is_json:
+        body = request.get_json(silent=True) or {}
+        raw = body.get("confirm")
+    if raw is None:
+        raw = request.form.get("confirm")
+    if raw is None:
+        raw = request.args.get("confirm")
+    if raw is None:
+        return False
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _request_json_or_form(*keys, default=None):
+    data = {}
+    if request.is_json:
+        data = request.get_json(silent=True) or {}
+    for key in keys:
+        if key in data and data[key] is not None:
+            return data[key]
+        if key in request.form and request.form.get(key) is not None:
+            return request.form.get(key)
+    return default
 
 
 @app.before_request
@@ -546,7 +584,8 @@ def view_blocks():
     blocked_entities.clear()
     blocked_entities.update(blocks)
     mode = get_mode()
-    can_execute = (current_role() == ROLE_ADMIN) or (mode != "stub")
+    live = is_integration_mode(mode)
+    can_execute = (current_role() == ROLE_ADMIN) or (not live)
     return render_template(
         "blocks.html",
         blocks=blocks,
@@ -554,7 +593,95 @@ def view_blocks():
         containment_label=get_mode_label(),
         containment_notice=get_ui_notice(),
         can_execute_containment=can_execute,
+        requires_live_confirm=live,
     )
+
+
+@app.route("/blocks/preview", methods=["POST"])
+@login_required
+def blocks_preview():
+    """Return a containment preview (never calls the integration network)."""
+    action = str(_request_json_or_form("action", default="") or "").strip().lower()
+    target_type = str(_request_json_or_form("target_type", "type", default="") or "").strip().lower()
+    target = str(_request_json_or_form("target", "ip", "user", default="") or "").strip()
+    # Convenience: /blocks/preview with ip= or user= alone
+    if not target_type and _request_json_or_form("ip"):
+        target_type = "ip"
+        target = str(_request_json_or_form("ip") or "").strip()
+        action = action or "block"
+    if not target_type and _request_json_or_form("user"):
+        target_type = "user"
+        target = str(_request_json_or_form("user") or "").strip()
+        action = action or "block"
+
+    actor_admin = current_role() == ROLE_ADMIN
+    if action == "block" and target_type == "ip":
+        preview = preview_block_ip(target, actor_is_admin=actor_admin)
+    elif action == "block" and target_type == "user":
+        preview = preview_block_user(target, actor_is_admin=actor_admin)
+    elif action == "unblock" and target_type == "ip":
+        preview = preview_unblock_ip(target, actor_is_admin=actor_admin)
+    elif action == "unblock" and target_type == "user":
+        preview = preview_unblock_user(target, actor_is_admin=actor_admin)
+    else:
+        return jsonify({
+            "ok": False,
+            "message": "Provide action (block|unblock) and target_type (ip|user).",
+        }), 400
+
+    status = 200 if preview.get("ok") else 400
+    return jsonify(preview), status
+
+
+@app.route("/blocks/execute", methods=["POST"])
+@login_required
+def blocks_execute():
+    """Admin-confirmed live/stub execute. Requires confirm=1."""
+    denied = _deny_stub_containment_if_analyst()
+    if denied is not None:
+        return denied
+
+    if not is_integration_mode():
+        msg = "Live execute is only available in integrated response mode."
+        if _wants_json():
+            return jsonify({"ok": False, "message": msg}), 400
+        session["auth_flash"] = {"ok": False, "message": msg}
+        return redirect("/blocks")
+
+    if not _request_confirm_flag():
+        msg = "Confirm required for live response (confirm=1)."
+        if _wants_json():
+            return jsonify({"ok": False, "message": msg, "requires_confirm": True}), 400
+        session["auth_flash"] = {"ok": False, "message": msg}
+        return redirect("/blocks")
+
+    action = str(_request_json_or_form("action", default="") or "").strip().lower()
+    target_type = str(_request_json_or_form("target_type", "type", default="") or "").strip().lower()
+    target = str(_request_json_or_form("target", "ip", "user", default="") or "").strip()
+    if not target_type and _request_json_or_form("ip"):
+        target_type = "ip"
+        target = str(_request_json_or_form("ip") or "").strip()
+        action = action or "block"
+    if not target_type and _request_json_or_form("user"):
+        target_type = "user"
+        target = str(_request_json_or_form("user") or "").strip()
+        action = action or "block"
+
+    result = execute_confirmed(action, target_type, target, confirm=True)
+    # Keep in-memory mirror used by legacy unblock route
+    blocks = load_blocked()
+    blocked_entities.clear()
+    blocked_entities.update(blocks)
+
+    if _wants_json() or request.is_json:
+        status = 200 if result.get("ok") else 400
+        return jsonify(result), status
+    session["auth_flash"] = {
+        "ok": bool(result.get("ok")),
+        "message": result.get("message") or ("Response applied." if result.get("ok") else "Response failed."),
+    }
+    return redirect("/blocks")
+
 
 @app.route("/block/ip", methods=["POST"])
 @login_required
@@ -562,8 +689,21 @@ def block_ip():
     denied = _deny_stub_containment_if_analyst()
     if denied is not None:
         return denied
+    # Integrated mode: prefer preview → /blocks/execute; keep one-click for simulation.
+    if is_integration_mode():
+        if not _request_confirm_flag():
+            msg = "Use Preview response, then Confirm live response."
+            if _wants_json():
+                return jsonify({"ok": False, "message": msg, "requires_confirm": True}), 400
+            session["auth_flash"] = {"ok": False, "message": msg}
+            return redirect("/blocks")
+        result = execute_confirmed("block", "ip", request.form.get("ip") or "", confirm=True)
+        if _wants_json():
+            return jsonify(result), (200 if result.get("ok") else 400)
+        return redirect("/blocks")
     execute_block_ip(request.form["ip"])
     return redirect("/blocks")
+
 
 @app.route("/block/user", methods=["POST"])
 @login_required
@@ -571,8 +711,20 @@ def block_user():
     denied = _deny_stub_containment_if_analyst()
     if denied is not None:
         return denied
+    if is_integration_mode():
+        if not _request_confirm_flag():
+            msg = "Use Preview response, then Confirm live response."
+            if _wants_json():
+                return jsonify({"ok": False, "message": msg, "requires_confirm": True}), 400
+            session["auth_flash"] = {"ok": False, "message": msg}
+            return redirect("/blocks")
+        result = execute_confirmed("block", "user", request.form.get("user") or "", confirm=True)
+        if _wants_json():
+            return jsonify(result), (200 if result.get("ok") else 400)
+        return redirect("/blocks")
     execute_block_user(request.form["user"])
     return redirect("/blocks")
+
 
 @app.route("/unblock", methods=["POST"])
 @login_required
@@ -580,7 +732,24 @@ def unblock():
     denied = _deny_stub_containment_if_analyst()
     if denied is not None:
         return denied
-    target = request.form["target"]
+    target = request.form.get("target") or ""
+    if is_integration_mode():
+        if not _request_confirm_flag():
+            msg = "Use Preview response, then Confirm live response."
+            if _wants_json():
+                return jsonify({"ok": False, "message": msg, "requires_confirm": True}), 400
+            session["auth_flash"] = {"ok": False, "message": msg}
+            return redirect("/blocks")
+        blocks = load_blocked()
+        if target in blocks.get("ips", []):
+            result = execute_confirmed("unblock", "ip", target, confirm=True)
+        elif target in blocks.get("users", []):
+            result = execute_confirmed("unblock", "user", target, confirm=True)
+        else:
+            result = {"ok": False, "message": "Target not found in block list."}
+        if _wants_json():
+            return jsonify(result), (200 if result.get("ok") else 400)
+        return redirect("/blocks")
 
     if target in blocked_entities["ips"]:
         execute_unblock_ip(target)
