@@ -883,3 +883,32 @@ code {
   background: rgba(59, 130, 246, 0.12);
   border-color: rgba(59, 130, 246, 0.35);
 }
+
+
+/* Company footer */
+.soc-site-footer {
+  margin-top: 2.5rem;
+  padding: 1rem 1.25rem 1.35rem;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  color: #7a8ba0;
+  font-size: 0.78rem;
+}
+.soc-site-footer-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.25rem;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.auth-page .soc-site-footer,
+.auth-footer {
+  margin-top: 1.5rem;
+  text-align: center;
+}
+.auth-footer .soc-site-footer-inner {
+  justify-content: center;
+  flex-direction: column;
+  gap: 0.25rem;
+}
