@@ -177,3 +177,11 @@ Capstone / academic use. Contact the author for other licensing.
 ## Start on Windows
 
 Double-click `start_dashboard.bat` (or the Desktop shortcut **AI-Powered SOC Assistant**), then open http://127.0.0.1:5000
+
+## Keep running on Windows
+
+See [docs/DEPLOY_WINDOWS.md](docs/DEPLOY_WINDOWS.md). Install auto-start:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install_windows_task.ps1
+```
