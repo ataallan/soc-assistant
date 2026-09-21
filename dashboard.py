@@ -27,6 +27,16 @@ from containment import (
     preview_unblock_user,
 )
 from rbac import ROLE_ADMIN, assignee_emails, role_for_identity
+from accounts import (
+    AccountExists,
+    account_is_active,
+    apply_account_action,
+    can_manage_accounts,
+    email_2fa_required,
+    get_account,
+    list_accounts,
+    register_account,
+)
 from report_filters import (
     compute_alert_counts,
     filter_report_df,
@@ -242,23 +252,6 @@ def deliver_otp(username: str, otp: str, subject: str = "Your Verification Code"
     return False
 
 # -------------------------------------------------
-# USER DATABASE
-# -------------------------------------------------
-USERS_FILE = "data/users.csv"
-os.makedirs("data", exist_ok=True)
-
-if os.path.exists(USERS_FILE):
-    df = pd.read_csv(USERS_FILE)
-    users_db = dict(zip(df["username"], df["password_hash"]))
-else:
-    users_db = {}
-
-def save_user(username, password_hash):
-    users_db[username] = password_hash
-    df = pd.DataFrame(list(users_db.items()), columns=["username", "password_hash"])
-    df.to_csv(USERS_FILE, index=False)
-
-# -------------------------------------------------
 # SQLITE STORAGE (source of truth)
 # -------------------------------------------------
 ensure_db_ready()
@@ -275,9 +268,36 @@ def _wants_json() -> bool:
     )
 
 
+_AUTH_SESSION_KEYS = (
+    "user",
+    "role",
+    "pending_user",
+    "otp",
+    "otp_time",
+    "otp_emailed",
+    "otp_email_hint",
+    "demo_otp",
+    "email_2fa_ok",
+    "account_limited",
+)
+
+_AUTH_PUBLIC_PATHS = {"/login", "/register", "/logout", "/2fa", "/2fa/resend", "/pending"}
+
+
+def _clear_auth_session() -> None:
+    for key in _AUTH_SESSION_KEYS:
+        session.pop(key, None)
+
+
 def current_role() -> str:
-    """Recompute role from the logged-in email/username each call."""
-    return role_for_identity(session.get("user"))
+    """Recompute role from SOC_ADMIN_EMAILS or the stored account role."""
+    identity = session.get("user")
+    if role_for_identity(identity) == ROLE_ADMIN:
+        return ROLE_ADMIN
+    account = get_account(identity) if identity else None
+    if account and str(account.get("role") or "").lower() == ROLE_ADMIN:
+        return ROLE_ADMIN
+    return role_for_identity(identity)
 
 
 def login_required(f):
@@ -365,6 +385,36 @@ def _request_json_or_form(*keys, default=None):
     return default
 
 
+def _account_gate_response():
+    """Block console routes until the account is approved and email 2FA is satisfied.
+
+    Accounts with no stored row (legacy test sessions) are left alone.
+    Pending users may keep a limited session for ``/pending`` only.
+    When email 2FA is required, a session without ``email_2fa_ok`` is cleared.
+    """
+    path = request.path or "/"
+    if path.startswith("/static/") or path in _AUTH_PUBLIC_PATHS:
+        return None
+
+    user = session.get("user")
+    if not user:
+        if session.get("pending_user"):
+            return redirect("/2fa")
+        return None
+
+    account = get_account(user)
+    if account is None:
+        return None
+
+    if not account_is_active(account):
+        return redirect("/pending")
+
+    if email_2fa_required(account) and not session.get("email_2fa_ok"):
+        _clear_auth_session()
+        return redirect("/login")
+    return None
+
+
 @app.before_request
 def _sync_role_on_request():
     if "user" in session:
@@ -374,16 +424,20 @@ def _sync_role_on_request():
     else:
         g.current_role = None
         g.is_admin = False
+    g.can_manage_accounts = can_manage_accounts(session.get("user")) if session.get("user") else False
+    return _account_gate_response()
 
 
 @app.context_processor
 def inject_rbac_context():
     role = current_role() if "user" in session else None
     flash = session.pop("auth_flash", None)
+    identity = session.get("user")
     return {
-        "session_user": session.get("user"),
+        "session_user": identity,
         "current_user_role": role,
         "is_admin": role == ROLE_ADMIN,
+        "can_manage_accounts": can_manage_accounts(identity) if identity else False,
         "auth_flash": flash,
         "containment_mode": get_mode(),
     }
@@ -400,42 +454,102 @@ def set_security_headers(response):
 # -------------------------------------------------
 # AUTH
 # -------------------------------------------------
+def _digits(value: str) -> str:
+    return "".join(ch for ch in (value or "") if ch.isdigit())
+
+
+def _otp_matches(code: str) -> bool:
+    expected = str(session.get("otp") or "")
+    code = _digits(code)
+    if not expected or len(code) != len(expected):
+        return False
+    return secrets.compare_digest(code, expected)
+
+
+def _begin_email_otp(username: str, *, subject: str = "Your Verification Code") -> bool:
+    """Store a one-time email code for ``username`` and send it. Does not open the console."""
+    otp = f"{secrets.randbelow(1_000_000):06d}"
+    session["pending_user"] = username
+    session["otp"] = otp
+    session["otp_time"] = time.time()
+    session.pop("user", None)
+    session.pop("role", None)
+    session.pop("email_2fa_ok", None)
+    session.pop("account_limited", None)
+    emailed = deliver_otp(username, otp, subject=subject)
+    session["otp_emailed"] = bool(emailed)
+    session["otp_email_hint"] = mask_login_email(username)
+    session.pop("demo_otp", None)
+    return bool(emailed)
+
+
+def _establish_session(username: str, *, email_2fa_ok: bool) -> None:
+    session["user"] = username
+    session["email_2fa_ok"] = bool(email_2fa_ok)
+    session["role"] = current_role()
+    session.pop("pending_user", None)
+    session.pop("otp", None)
+    session.pop("otp_time", None)
+    session.pop("demo_otp", None)
+    session.pop("otp_emailed", None)
+    session.pop("otp_email_hint", None)
+    session.pop("account_limited", None)
+
+
+def _render_2fa(error: str = "", message: str = ""):
+    return render_template(
+        "2fa.html",
+        error=error or None,
+        message=message or None,
+        otp_emailed=bool(session.get("otp_emailed")),
+        otp_email_hint=session.get("otp_email_hint") or mask_login_email(session.get("pending_user") or ""),
+    )
+
+
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
-        username = request.form["username"]  # MUST be email
-        password = request.form["password"]
-        if username in users_db:
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password") or ""
+        if len(password) < 8:
+            return render_template("register.html", error="Password must be at least 8 characters.")
+        try:
+            record = register_account(username, generate_password_hash(password))
+        except AccountExists:
             return render_template("register.html", error="User already exists")
-        save_user(username, generate_password_hash(password))
-        return redirect("/login")
+        except ValueError as exc:
+            return render_template("register.html", error=str(exc))
+        created = "admin" if record.get("approved") else "pending"
+        return redirect(f"/login?registered={created}")
     return render_template("register.html")
+
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    registered = request.args.get("registered") if request.method == "GET" else None
     if request.method == "POST":
-        username = request.form["username"]
-        password = request.form["password"]
-
-        if username not in users_db or not check_password_hash(users_db[username], password):
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password") or ""
+        account = get_account(username)
+        if not account or not check_password_hash(account["password_hash"], password):
             return render_template("login.html", error="Invalid username or password")
 
-        # Generate OTP
-        otp = f"{secrets.randbelow(1_000_000):06d}"
+        _clear_auth_session()
+        if not account_is_active(account):
+            # Limited session only: pending / rejected / deactivated skip email 2FA.
+            session["user"] = account["username"]
+            session["account_limited"] = True
+            session["role"] = current_role()
+            return redirect("/pending")
 
-        # Save OTP temporarily
-        session["pending_user"] = username
-        session["otp"] = otp
-        session["otp_time"] = time.time()
+        if email_2fa_required(account):
+            _begin_email_otp(account["username"])
+            return redirect("/2fa")
 
-        # OTP always goes to the account email that just authenticated (username).
-        emailed = deliver_otp(username, otp)
-        session["otp_emailed"] = bool(emailed)
-        session["otp_email_hint"] = mask_login_email(username)
-        session.pop("demo_otp", None)  # never show codes in the browser
-        return redirect("/2fa")
+        _establish_session(account["username"], email_2fa_ok=False)
+        return redirect("/")
 
-    return render_template("login.html")
+    return render_template("login.html", registered=registered)
 
 
 @app.route("/2fa", methods=["GET", "POST"])
@@ -444,71 +558,105 @@ def two_factor():
         return redirect("/login")
 
     if request.method == "POST":
-        code = request.form["code"]
+        code = request.form.get("code") or ""
 
-        # Check expiration (5 mins)
         if time.time() - session.get("otp_time", 0) > 300:
             session.pop("pending_user", None)
             session.pop("otp", None)
             session.pop("otp_time", None)
-            return render_template("2fa.html", error="Code expired. Please login again.", otp_emailed=False, otp_email_hint="")
+            return render_template(
+                "2fa.html",
+                error="Code expired. Please login again.",
+                otp_emailed=False,
+                otp_email_hint="",
+            )
 
-        if code == session.get("otp"):
+        if _otp_matches(code):
             username = session["pending_user"]
-            session["user"] = username
-            session["role"] = role_for_identity(username)
-            session.pop("pending_user", None)
-            session.pop("otp", None)
-            session.pop("otp_time", None)
-            session.pop("demo_otp", None)
-            session.pop("otp_emailed", None)
-            session.pop("otp_email_hint", None)
+            account = get_account(username)
+            if account and not account_is_active(account):
+                _clear_auth_session()
+                session["user"] = account["username"]
+                session["account_limited"] = True
+                return redirect("/pending")
+            _establish_session(username, email_2fa_ok=True)
             return redirect("/")
 
-        return render_template(
-            "2fa.html",
-            error="Invalid code",
-            otp_emailed=bool(session.get("otp_emailed")),
-            otp_email_hint=session.get("otp_email_hint") or mask_login_email(session.get("pending_user") or ""),
-        )
+        return _render_2fa(error="Invalid code")
 
-    return render_template(
-        "2fa.html",
-        otp_emailed=bool(session.get("otp_emailed")),
-        otp_email_hint=session.get("otp_email_hint") or mask_login_email(session.get("pending_user") or ""),
-    )
+    return _render_2fa()
 
 
-# ✅ NEW: RESEND OTP
 @app.route("/2fa/resend", methods=["POST"])
 def resend_otp():
     if "pending_user" not in session:
         return redirect("/login")
 
     username = session["pending_user"]
-
-    # Generate new OTP
-    otp = f"{secrets.randbelow(1_000_000):06d}"
-    session["otp"] = otp
-    session["otp_time"] = time.time()
-
-    # Resend always targets the pending login account email.
-    emailed = deliver_otp(username, otp, subject="Your New Verification Code")
-    session["otp_emailed"] = bool(emailed)
-    session["otp_email_hint"] = mask_login_email(username)
-    session.pop("demo_otp", None)
-    hint = session["otp_email_hint"]
+    emailed = _begin_email_otp(username, subject="Your New Verification Code")
+    hint = session.get("otp_email_hint") or mask_login_email(username)
     if emailed:
         msg = f"A new code has been sent to {hint}."
     else:
         msg = "Email delivery is not configured. Ask your admin to set RESEND_API_KEY (or check the server log)."
-    return render_template("2fa.html", message=msg, otp_emailed=bool(emailed), otp_email_hint=hint)
+    return _render_2fa(message=msg)
+
+
+@app.route("/pending")
+def pending_account():
+    user = session.get("user")
+    if not user:
+        return redirect("/login")
+    account = get_account(user)
+    if account and account_is_active(account):
+        if email_2fa_required(account) and not session.get("email_2fa_ok"):
+            _clear_auth_session()
+            return redirect("/login")
+        return redirect("/")
+    status = (account or {}).get("status") or "pending"
+    return render_template("pending.html", status=status, username=user)
+
 
 @app.route("/logout")
 def logout():
-    session.pop("user", None)
-    session.pop("role", None)
+    _clear_auth_session()
     return redirect("/login")
+
+
+def _deny_unless_account_manager():
+    if "user" not in session:
+        return redirect("/login")
+    if can_manage_accounts(session.get("user")):
+        return None
+    msg = "Admin role required to manage accounts."
+    if _wants_json():
+        return jsonify({"ok": False, "status": "Forbidden", "message": msg}), 403
+    session["auth_flash"] = {"ok": False, "message": msg}
+    return redirect("/")
+
+
+@app.route("/accounts", methods=["GET"])
+@login_required
+def accounts_page():
+    denied = _deny_unless_account_manager()
+    if denied is not None:
+        return denied
+    return render_template(
+        "accounts.html",
+        accounts=list_accounts(),
+    )
+
+
+@app.route("/accounts/<action>", methods=["POST"])
+@login_required
+def accounts_action(action: str):
+    denied = _deny_unless_account_manager()
+    if denied is not None:
+        return denied
+    target = (request.form.get("username") or "").strip()
+    ok, message = apply_account_action(session.get("user") or "", action, target)
+    session["auth_flash"] = {"ok": ok, "message": message}
+    return redirect("/accounts")
 
 # -------------------------------------------------
 # HOME

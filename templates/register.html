@@ -21,11 +21,18 @@
         <div class="alert alert-danger">{{ error }}</div>
         {% endif %}
 
-        <form method="POST">
+        <form method="POST" autocomplete="off">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="autofill-trap" aria-hidden="true">
+                <input type="text" name="trap_username" tabindex="-1" autocomplete="username">
+                <input type="password" name="trap_password" tabindex="-1" autocomplete="new-password">
+            </div>
 
-            <input name="username" class="form-control mb-3" placeholder="Username" required autocomplete="username">
-            <input name="password" type="password" class="form-control mb-3" placeholder="Password" required autocomplete="new-password">
+            <input id="register-username" name="username" class="form-control mb-3" placeholder="Email" required autocomplete="off" autocapitalize="off" spellcheck="false" readonly onfocus="this.removeAttribute('readonly')" data-autofill-guard data-lpignore="true" data-1p-ignore="true">
+            <div class="password-field mb-3">
+                <input id="register-password" name="password" type="password" class="form-control" placeholder="Password (8+ characters)" required minlength="8" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" data-autofill-guard data-lpignore="true" data-1p-ignore="true">
+                <button type="button" class="pw-toggle" data-toggle-password="register-password" aria-pressed="false" aria-label="Show password">Show</button>
+            </div>
             <button class="btn btn-success w-100">Create Account</button>
             <p class="mt-3 text-center mb-0" style="font-size:0.9rem;">
                 <a href="/login">Already have an account?</a>
@@ -33,6 +40,7 @@
         </form>
     </div>
 
+    <script src="/static/js/auth.js"></script>
 
     <footer class="soc-site-footer auth-footer">
   <div class="soc-site-footer-inner footer-centered-stack">

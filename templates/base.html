@@ -68,6 +68,9 @@
                 <li class="nav-item"><a class="nav-link" href="/labels">Labeling</a></li>
                 <li class="nav-item"><a class="nav-link" href="/fp-review">FP review</a></li>
                 <li class="nav-item"><a class="nav-link" href="/health">System</a></li>
+                {% if can_manage_accounts %}
+                <li class="nav-item"><a class="nav-link" href="/accounts">Accounts</a></li>
+                {% endif %}
             </ul>
 
             <div class="d-flex align-items-center gap-2 ms-lg-2">

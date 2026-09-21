@@ -61,7 +61,7 @@ flowchart LR
 | `triage_engine.py` | Keyword/rules severity + ML predict helpers |
 | `soc_triage_cli.py` | CLI: train, watch CSV/Wazuh, report, unblock |
 | `wazuh_integration.py` | JWT auth, endpoint probe/cache, structured alerts |
-| `dashboard.py` | Login + email OTP, watchers, reports, Wazuh table |
+| `dashboard.py` | Login, account approval, email OTP, watchers, reports, Wazuh table |
 | `containment.py` | Block/unblock with `simulated` / `dry_run` / `stub`/`live` + preview→confirm + SQLite audit |
 | `db.py` | SQLite schema, migration, export helpers |
 | `templates/` | UI pages |

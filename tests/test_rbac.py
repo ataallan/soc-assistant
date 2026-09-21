@@ -42,6 +42,7 @@ def rbac_client(tmp_path, monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("SECRET_KEY", "test-secret")
     monkeypatch.setenv("SOC_ADMIN_EMAILS", "admin@example.com, Lead@Example.COM")
+    monkeypatch.setenv("SOC_USERS_FILE", str(tmp_path / "users.csv"))
     monkeypatch.setenv("CONTAINMENT_MODE", "simulated")
 
     import db
@@ -132,6 +133,7 @@ def _stub_dashboard_client(tmp_path, monkeypatch, mode="stub"):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("SECRET_KEY", "test-secret")
     monkeypatch.setenv("SOC_ADMIN_EMAILS", "admin@example.com")
+    monkeypatch.setenv("SOC_USERS_FILE", str(tmp_path / "users.csv"))
     monkeypatch.setenv("CONTAINMENT_MODE", mode)
     monkeypatch.delenv("CONTAINMENT_STUB_URL", raising=False)
     monkeypatch.delenv("CONTAINMENT_STUB_TOKEN", raising=False)
