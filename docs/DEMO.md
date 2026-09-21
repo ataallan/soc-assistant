@@ -124,3 +124,5 @@ Save captures under `docs/screenshots/` using the names in `docs/screenshots/REA
 ## Email verification (login OTP)
 
 Prefer `RESEND_API_KEY` (same Resend account as muncyber.com). Codes are emailed and **never shown in the browser**. Optional fallback: `MAIL_USERNAME` / `MAIL_PASSWORD` (Gmail SMTP). Without either, the code is logged on the server console only for local debugging.
+
+The first registered account is the site admin and is approved immediately. Later accounts stay pending (no email code, no console) until an admin approves them. Approved users then get the email code when `SOC_EMAIL_2FA` is on (the default).

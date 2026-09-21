@@ -54,7 +54,9 @@ copy .env.example .env   # Windows
 # cp .env.example .env   # macOS / Linux
 ```
 
-Edit `.env` and set `SECRET_KEY`, `SOC_ADMIN_EMAILS` / `SOC_ANALYST_EMAILS`, mail credentials, `SOC_DB_PATH` (optional; default `data/soc_assistant.db`), and (optionally) `SOC_DATABASE_URL` / `DATABASE_URL` for PostgreSQL, plus Wazuh values. **Never commit `.env` or `*.db`.**
+Edit `.env` and set `SECRET_KEY`, `SOC_ADMIN_EMAILS` / `SOC_ANALYST_EMAILS`, mail credentials (`RESEND_API_KEY` or `MAIL_*`), `SOC_DB_PATH` (optional; default `data/soc_assistant.db`), and (optionally) `SOC_DATABASE_URL` / `DATABASE_URL` for PostgreSQL, plus Wazuh values. **Never commit `.env` or `*.db`.**
+
+There is no default password. The first **Create account** is the site administrator and is approved immediately. Later accounts stay pending until that admin approves them on **Accounts**. Approved users receive an email login code (`SOC_EMAIL_2FA` defaults to on). To start over, stop the app and delete `data/users.csv` (see [docs/SECURITY.md](docs/SECURITY.md)); that does not wipe the triage database.
 
 Runtime triage and containment state lives in **SQLite by default** (optional PostgreSQL). See [docs/STORAGE.md](docs/STORAGE.md).
 

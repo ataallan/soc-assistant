@@ -14,6 +14,7 @@ def app_client(tmp_path, monkeypatch):
     monkeypatch.delenv("SOC_DATABASE_URL", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("SECRET_KEY", "test-secret")
+    monkeypatch.setenv("SOC_USERS_FILE", str(tmp_path / "users.csv"))
 
     import db
 

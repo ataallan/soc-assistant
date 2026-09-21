@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Accounts{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+  <div>
+    <h1 class="page-title">Accounts</h1>
+    <p class="page-subtitle">Approve people before they can use the console. The first account is the site admin. Approved users get an email login code.</p>
+  </div>
+</div>
+
+<div class="table-panel">
+  <div class="table-scroll">
+    <table class="table table-striped align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th>Role</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in accounts %}
+        <tr>
+          <td>{{ row.username }}</td>
+          <td><span class="role-chip role-{{ row.role }}">{{ row.role }}</span></td>
+          <td>{{ row.status }}</td>
+          <td>
+            <div class="d-flex flex-wrap gap-2">
+              {% if row.status != 'active' %}
+              <form method="POST" action="/accounts/approve">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="username" value="{{ row.username }}">
+                <button class="btn btn-sm btn-success" type="submit">Approve</button>
+              </form>
+              {% endif %}
+              {% if row.status == 'pending' or row.status == 'active' %}
+              <form method="POST" action="/accounts/reject">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="username" value="{{ row.username }}">
+                <button class="btn btn-sm btn-outline-warning" type="submit">Reject</button>
+              </form>
+              {% endif %}
+              {% if row.status == 'active' and row.username != session_user %}
+              <form method="POST" action="/accounts/deactivate">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="username" value="{{ row.username }}">
+                <button class="btn btn-sm btn-outline-danger" type="submit">Deactivate</button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="4" class="text-secondary">No accounts yet.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

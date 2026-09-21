@@ -23,7 +23,7 @@ powershell -ExecutionPolicy Bypass -File .\install_and_run.ps1
 ```
 
 3. Browser opens **http://127.0.0.1:5000/login**  
-   Register an account, then set that email in `.env` as `SOC_ADMIN_EMAILS` if you need admin actions.
+   **Create account** once. That first account is the site admin and can sign in immediately. Later accounts stay pending until that admin approves them on **Accounts**. Optional: list extra admins in `.env` as `SOC_ADMIN_EMAILS` (they still need an approved account).
 
 ### Useful flags
 

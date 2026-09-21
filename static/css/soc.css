@@ -828,6 +828,36 @@ a:hover {
   text-decoration: underline;
 }
 
+.password-field {
+  position: relative;
+}
+.password-field .form-control {
+  padding-right: 4.5rem;
+}
+.password-field .pw-toggle {
+  position: absolute;
+  right: 0.35rem;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 0;
+  background: transparent;
+  color: var(--soc-accent);
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.2rem 0.45rem;
+}
+.password-field .pw-toggle:hover,
+.password-field .pw-toggle:focus {
+  color: var(--soc-text);
+}
+.autofill-trap {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
 code {
   color: #93c5fd;
   background: rgba(59, 130, 246, 0.1);
