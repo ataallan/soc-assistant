@@ -51,3 +51,8 @@ data/triage_export.csv
 
 # SQLite backups
 data/backups/
+
+# Windows standalone installer output (machine-specific or rebuilt locally)
+install.log
+*.lnk
+AI-Powered-SOC-Assistant-standalone.zip

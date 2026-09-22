@@ -68,4 +68,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\uninstall_windows_task.ps1
   `.\scripts\install_windows_task.ps1 -AtStartup` (run elevated).
 - Keep WSL/Wazuh running separately if you use live alerts.
 - Manual start without auto-start: Desktop shortcut **AI-Powered SOC Assistant**
-  or `start_dashboard.bat` (uses debug/reloader by default).
+  (icon `static/img/ai-powered-soc-assistant.ico`, target `Start AI-Powered SOC Assistant.bat`).
+  That launcher opens the browser and does not use the Flask reloader.
+  `start_dashboard.bat` calls the same launcher.
