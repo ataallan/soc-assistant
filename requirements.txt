@@ -1,3 +1,5 @@
+# Dashboard, triage (scikit-learn), and optional PostgreSQL (psycopg).
+# Torch and ultralytics are not required and are not installed.
 flask
 flask-mail
 pandas

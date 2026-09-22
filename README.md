@@ -183,7 +183,7 @@ Capstone / academic use. Contact the author for other licensing.
 
 ## Start on Windows
 
-Double-click `start_dashboard.bat` (or the Desktop shortcut **AI-Powered SOC Assistant**), then open http://127.0.0.1:5000
+After `install_and_run.bat`, double-click the Desktop shortcut **AI-Powered SOC Assistant** (company-logo icon). That runs `Start AI-Powered SOC Assistant.bat`, starts the dashboard, and opens http://127.0.0.1:5000/login. It does not reinstall packages. `start_dashboard.bat` calls the same launcher.
 
 ## Keep running on Windows
 
@@ -200,4 +200,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install_windows_task.ps1
 
 ## Standalone laptop install
 
-Unzip and run [`install_and_run.bat`](install_and_run.bat) — see [docs/STANDALONE.md](docs/STANDALONE.md).
+Unzip and run [`install_and_run.bat`](install_and_run.bat). The first run creates `.venv`, installs `requirements.txt`, writes `install.log`, and adds **AI-Powered SOC Assistant** shortcuts on the Desktop and in the product folder. The shortcut icon is `static/img/ai-powered-soc-assistant.ico`, built from the Mun Cyber Technologies logo. See [docs/STANDALONE.md](docs/STANDALONE.md).
+
+Build the customer zip from a checkout (includes the icon, `install_and_run.bat`, and `Start AI-Powered SOC Assistant.bat`; excludes `.env`, `.venv`, and tunnel tokens):
+
+```bash
+python scripts/build_standalone_zip.py
+```
