@@ -10,16 +10,10 @@
   <div class="d-flex flex-wrap gap-2">
     <form method="POST" action="/labels/pull" class="d-inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
       <button type="submit" class="btn btn-primary btn-sm">
         <i class="bi bi-cloud-download me-1"></i> Pull from Wazuh
       </button>
     </form>
-    {% if is_admin %}
-    <button type="button" id="btnRetrain" class="btn btn-success btn-sm">
-      <i class="bi bi-cpu me-1"></i> Retrain model
-    </button>
-    {% endif %}
   </div>
 </div>
 
@@ -28,6 +22,35 @@
   {{ flash.message }}
 </div>
 {% endif %}
+
+<div class="soc-panel mb-3">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div class="d-flex flex-wrap gap-4">
+      <div>
+        <div class="text-secondary small">Active</div>
+        <div class="fw-semibold">{{ model_status.active.name if model_status and model_status.active else "—" }}</div>
+        <div class="text-secondary small">{{ model_status.active.timestamp if model_status and model_status.active else "" }}</div>
+      </div>
+      <div>
+        <div class="text-secondary small">Latest</div>
+        <div class="fw-semibold">{{ model_status.latest.name if model_status and model_status.latest else "—" }}</div>
+        <div class="text-secondary small">{{ model_status.latest.timestamp if model_status and model_status.latest else "" }}</div>
+      </div>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <button type="button" id="btnTrain" class="btn btn-success btn-sm">Train candidate</button>
+      <button type="button" id="btnActivate" class="btn btn-outline-success btn-sm" {% if not (model_status and model_status.latest) %}disabled{% endif %}>Activate</button>
+    </div>
+  </div>
+</div>
+
+<div class="soc-panel mb-3">
+  <form method="POST" action="/labels/upload" enctype="multipart/form-data" class="d-flex flex-wrap gap-2 align-items-center mb-0">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="file" name="file" accept=".csv,text/csv" class="form-control form-control-sm" style="max-width:22rem;" required>
+    <button type="submit" class="btn btn-outline-primary btn-sm">Import</button>
+  </form>
+</div>
 
 <div class="row g-3 mb-4">
   <div class="col-6 col-md-3">
@@ -57,53 +80,55 @@
 </div>
 
 <div class="soc-panel">
-  <h4 class="mb-3" style="font-size:1.05rem;">Pending queue</h4>
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <h4 class="mb-0" style="font-size:1.05rem;">Pending</h4>
+    {% if pending %}
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+      <select id="bulkSev" class="form-select form-select-sm" style="width:8rem;">
+        <option value="low">low</option>
+        <option value="medium">medium</option>
+        <option value="high">high</option>
+        <option value="critical">critical</option>
+      </select>
+      <button type="button" id="bulkLabel" class="btn btn-sm btn-outline-primary">Label</button>
+      <button type="button" id="bulkSkip" class="btn btn-sm btn-outline-secondary">Skip</button>
+    </div>
+    {% endif %}
+  </div>
   {% if pending %}
   <div class="table-scroll">
-    <table class="table table-bordered table-striped mb-0 align-middle">
+    <table class="table table-bordered table-striped mb-0 align-middle" id="labelTable">
       <thead>
         <tr>
+          <th style="width:2.2rem;"><input type="checkbox" id="checkAll" aria-label="All"></th>
           <th style="width:4rem;">ID</th>
           <th>Alert</th>
-          <th style="width:8rem;">Wazuh</th>
-          <th style="width:18rem;">Analyst label</th>
+          <th style="width:7rem;">Source</th>
+          <th style="width:22rem;">Label</th>
         </tr>
       </thead>
       <tbody>
         {% for item in pending %}
-        <tr>
+        <tr class="label-row" data-id="{{ item.id }}" tabindex="0">
+          <td><input type="checkbox" class="label-check" value="{{ item.id }}" aria-label="Select {{ item.id }}"></td>
           <td class="text-secondary">#{{ item.id }}</td>
           <td style="max-width:520px;white-space:normal;">
             <div class="fw-medium mb-1">{{ item.summary or item.full_log }}</div>
             <div class="text-secondary small">
-              {% if item.agent %}<span class="me-2">Agent: {{ item.agent }}</span>{% endif %}
-              {% if item.rule_id %}<span class="me-2">Rule: {{ item.rule_id }}</span>{% endif %}
-              {% if item.rule_level %}<span>Level: {{ item.rule_level }}</span>{% endif %}
+              {% if item.agent %}<span class="me-2">{{ item.agent }}</span>{% endif %}
+              {% if item.rule_id %}<span class="me-2">{{ item.rule_id }}</span>{% endif %}
+              {% if item.wazuh_severity %}<span>{{ item.wazuh_severity }}</span>{% endif %}
             </div>
           </td>
+          <td><span class="badge text-bg-secondary">{{ item.source or "wazuh" }}</span></td>
           <td>
-            <span class="badge text-bg-secondary">{{ item.wazuh_severity or 'n/a' }}</span>
-          </td>
-          <td>
-            <form method="POST" action="/labels/save" class="d-flex flex-wrap gap-1 align-items-center">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-              <input type="hidden" name="id" value="{{ item.id }}">
-              <select name="severity" class="form-select form-select-sm" style="width:7.5rem;" required>
-                <option value="" disabled selected>Severity</option>
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
-                <option value="critical">critical</option>
-              </select>
-              <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
-            </form>
-            <form method="POST" action="/labels/skip" class="mt-1">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-              <input type="hidden" name="id" value="{{ item.id }}">
-              <button type="submit" class="btn btn-sm btn-outline-secondary">Skip</button>
-            </form>
+            <div class="label-actions">
+              <button type="button" class="btn btn-sm btn-outline-secondary sev-btn" data-sev="low">Low <kbd>1</kbd></button>
+              <button type="button" class="btn btn-sm btn-outline-warning sev-btn" data-sev="medium">Med <kbd>2</kbd></button>
+              <button type="button" class="btn btn-sm btn-outline-danger sev-btn" data-sev="high">High <kbd>3</kbd></button>
+              <button type="button" class="btn btn-sm btn-danger sev-btn" data-sev="critical">Crit <kbd>4</kbd></button>
+              <button type="button" class="btn btn-sm btn-outline-secondary skip-btn">Skip <kbd>S</kbd></button>
+            </div>
           </td>
         </tr>
         {% endfor %}
@@ -119,29 +144,157 @@
 
 {% block scripts %}
 <script>
-document.getElementById("btnRetrain")?.addEventListener("click", async () => {
-  const btn = document.getElementById("btnRetrain");
-  btn.disabled = true;
-  try {
-    const headers = (typeof csrfHeaders === "function")
-      ? csrfHeaders({ "X-Requested-With": "XMLHttpRequest", "Accept": "application/json" })
-      : { "X-Requested-With": "XMLHttpRequest", "Accept": "application/json" };
-    const res = await fetch("/labels/retrain", {
-      method: "POST",
-      headers,
-    });
-    const data = await res.json();
-    if (typeof showToast === "function") {
-      showToast(data.message || (data.ok ? "Retrain complete" : "Retrain failed"), data.ok ? "success" : "error");
-    } else {
-      alert(data.message || JSON.stringify(data));
-    }
-  } catch (e) {
-    if (typeof showToast === "function") showToast("Retrain request failed", "error");
-    else alert("Retrain request failed");
-  } finally {
-    btn.disabled = false;
+(function () {
+  const headers = () => (typeof csrfHeaders === "function")
+    ? csrfHeaders({ "X-Requested-With": "XMLHttpRequest", "Accept": "application/json" })
+    : { "X-Requested-With": "XMLHttpRequest", "Accept": "application/json" };
+
+  function toast(message, ok) {
+    if (typeof showToast === "function") showToast(message, ok ? "success" : "error");
   }
-});
+
+  async function postJson(url, body) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: Object.assign(headers(), { "Content-Type": "application/json" }),
+      body: JSON.stringify(body || {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { res, data };
+  }
+
+  async function postForm(url, params) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: Object.assign(headers(), { "Content-Type": "application/x-www-form-urlencoded" }),
+      body: new URLSearchParams(params),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { res, data };
+  }
+
+  function rows() {
+    return Array.from(document.querySelectorAll("tr.label-row"));
+  }
+
+  let focusIndex = 0;
+  function focusRow(index) {
+    const list = rows();
+    if (!list.length) return;
+    focusIndex = Math.max(0, Math.min(index, list.length - 1));
+    list.forEach((row, i) => row.classList.toggle("label-focus", i === focusIndex));
+    list[focusIndex].scrollIntoView({ block: "nearest" });
+  }
+
+  function removeRow(row) {
+    const list = rows();
+    const idx = list.indexOf(row);
+    row.remove();
+    if (!rows().length) {
+      window.location.reload();
+      return;
+    }
+    focusRow(Math.min(idx, rows().length - 1));
+  }
+
+  async function labelRow(row, severity) {
+    const id = row.getAttribute("data-id");
+    const { res, data } = await postForm("/labels/save", { id, severity });
+    if (!res.ok || data.ok === false) {
+      toast(data.message || "Could not label", false);
+      return;
+    }
+    removeRow(row);
+  }
+
+  async function skipRow(row) {
+    const id = row.getAttribute("data-id");
+    const { res, data } = await postForm("/labels/skip", { id });
+    if (!res.ok || data.ok === false) {
+      toast(data.message || "Could not skip", false);
+      return;
+    }
+    removeRow(row);
+  }
+
+  document.getElementById("labelTable")?.addEventListener("click", (event) => {
+    const row = event.target.closest("tr.label-row");
+    if (!row) return;
+    focusRow(rows().indexOf(row));
+    if (event.target.closest(".sev-btn")) {
+      labelRow(row, event.target.closest(".sev-btn").getAttribute("data-sev"));
+    } else if (event.target.closest(".skip-btn")) {
+      skipRow(row);
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (!document.getElementById("labelTable")) return;
+    const tag = (event.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || tag === "select") return;
+    const list = rows();
+    if (!list.length) return;
+    const map = { "1": "low", "2": "medium", "3": "high", "4": "critical" };
+    if (map[event.key]) {
+      event.preventDefault();
+      labelRow(list[focusIndex] || list[0], map[event.key]);
+    } else if (event.key === "s" || event.key === "S") {
+      event.preventDefault();
+      skipRow(list[focusIndex] || list[0]);
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      focusRow(focusIndex + 1);
+    }
+  });
+
+  document.getElementById("checkAll")?.addEventListener("change", (event) => {
+    document.querySelectorAll(".label-check").forEach((box) => {
+      box.checked = event.target.checked;
+    });
+  });
+
+  async function bulk(action) {
+    const ids = Array.from(document.querySelectorAll(".label-check:checked")).map((box) => box.value);
+    if (!ids.length) return;
+    const severity = document.getElementById("bulkSev")?.value;
+    const { res, data } = await postJson("/labels/bulk", { ids, action, severity });
+    toast(data.message || (res.ok ? "Updated" : "Failed"), res.ok && data.updated);
+    if (data.updated) window.location.reload();
+  }
+
+  document.getElementById("bulkLabel")?.addEventListener("click", () => bulk("label"));
+  document.getElementById("bulkSkip")?.addEventListener("click", () => bulk("skip"));
+
+  document.getElementById("btnTrain")?.addEventListener("click", async () => {
+    const btn = document.getElementById("btnTrain");
+    btn.disabled = true;
+    try {
+      const { res, data } = await postJson("/labels/retrain", {});
+      toast(data.message || (data.ok ? "Candidate trained." : "Train failed."), !!(res.ok && data.ok));
+      if (res.ok && data.ok) window.location.reload();
+    } catch (e) {
+      toast("Train failed.", false);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById("btnActivate")?.addEventListener("click", async () => {
+    if (!window.confirm("Activate latest candidate?")) return;
+    const btn = document.getElementById("btnActivate");
+    btn.disabled = true;
+    try {
+      const { res, data } = await postJson("/labels/activate", {});
+      toast(data.message || (data.ok ? "Activated." : "Activate failed."), !!(res.ok && data.ok));
+      if (res.ok && data.ok) window.location.reload();
+    } catch (e) {
+      toast("Activate failed.", false);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  if (rows().length) focusRow(0);
+})();
 </script>
 {% endblock %}

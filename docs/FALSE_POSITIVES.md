@@ -8,7 +8,8 @@ two FP controls:
 2. **Noise YAML rules** — low/ignore detections such as `rules/dpkg_noise_note.yml` and `rules/pam_session_noise.yml`
 
 The **FP review** page (`/fp-review`) shows which rule keys dominate recent `triage_events`
-so you can tune allowlists weekly.
+so you can tune allowlists weekly. On a developer console, **Enqueue** sends a few samples
+for that rule into the labeling queue.
 
 ## Weekly analyst loop
 

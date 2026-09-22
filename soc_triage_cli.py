@@ -427,17 +427,31 @@ def save_to_reports(result: dict):
     # Keep YAML match / enrichment extras inside raw_json for the report UI
     try:
         raw_payload = dict(clean_row)
-        for key in ("matched_rules", "matched_rule_id", "rule_explain", "enrichment_notes"):
+        for key in ("matched_rules", "matched_rule_id", "rule_explain", "enrichment_notes", "rule_severity"):
             if key in result:
                 raw_payload[key] = result.get(key)
+        if result.get("rule_severity"):
+            raw_payload["rule_severity"] = result.get("rule_severity")
         clean_row["raw_json"] = json.dumps(raw_payload, default=str)
     except Exception:
         pass
 
+    row_id = None
     try:
-        insert_triage_event(clean_row, source="triage")
+        row_id = insert_triage_event(clean_row, source="triage")
     except Exception as e:
         print("⚠ Error saving to SQLite:", e)
+
+    try:
+        from labeling import maybe_auto_queue_disagreement
+
+        queued = dict(clean_row)
+        queued["id"] = row_id
+        queued["rule_severity"] = result.get("rule_severity")
+        queued["ml_prediction"] = clean_row.get("ml_prediction")
+        maybe_auto_queue_disagreement(queued)
+    except Exception as e:
+        print("⚠ Label queue skipped:", e)
 
     # Optional CSV mirror for demo/export compatibility (append-style rewrite)
     try:
@@ -624,7 +638,14 @@ def cli_menu():
         choice = input("Enter choice: ").strip()
 
         if choice == "1":
-            train_ml_model("data/sample_logs.csv")
+            metrics = train_ml_model("data/sample_logs.csv")
+            if metrics:
+                try:
+                    from model_registry import register_live_as_checkpoint
+
+                    register_live_as_checkpoint(metrics)
+                except Exception as exc:
+                    print("⚠ Checkpoint record skipped:", exc)
         elif choice == "2":
             watch_csv("data/sample_logs.csv")
         elif choice == "3":

@@ -41,17 +41,18 @@ Matching is **case-insensitive** against the login username/email. A stored acco
 |---|---|---|
 | Dashboards, reports, health | yes | yes |
 | Cases (create / notes / status) | yes | yes |
-| Labeling (pull / label / skip) | yes | yes |
+| Labeling, CSV import, train / activate | no | no |
 | Start / stop watchers | yes | yes |
 | View containment block list | yes | yes |
-| Train / retrain ML model | no | yes |
 | SQLite backup | no | yes |
 | Integrated (stub/live) containment preview | yes | yes |
 | Integrated (stub/live) containment execute (confirm required) | no | yes |
 | Simulated / preview-mode containment execute | yes | yes |
 | Accounts (approve / reject / deactivate) | no | yes |
 
-The navbar shows a role chip (`admin` / `analyst`). Admin-only buttons are hidden for analysts; the server still returns **403** (JSON) or a redirect + toast if called directly.
+The navbar shows a role chip (`admin` / `analyst` / `developer`). Admin-only buttons are hidden for analysts; the server still returns **403** (JSON) or a redirect + toast if called directly.
+
+Labeling, CSV import, and train / activate are **developer / lab only** (stored role `developer`, `SOC_DEVELOPER_EMAILS`, or `SOC_DEV_TRAINING` on a lab host). Customer admins do not get those controls. See [LABELING.md](LABELING.md).
 
 ## Session cookies
 

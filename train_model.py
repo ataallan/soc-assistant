@@ -279,4 +279,31 @@ def _clone_fresh(name: str):
 
 
 if __name__ == "__main__":
-    train_ml_model()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Train the SOC severity model")
+    parser.add_argument(
+        "--candidate",
+        action="store_true",
+        help="Write a versioned checkpoint and leave the active model in place",
+    )
+    parser.add_argument(
+        "--activate",
+        metavar="ID",
+        help="Promote a checkpoint id to the live triage artifacts",
+    )
+    args = parser.parse_args()
+    if args.activate:
+        from model_registry import activate_checkpoint
+
+        activate_checkpoint(args.activate)
+    elif args.candidate:
+        from model_registry import train_candidate
+
+        train_candidate()
+    else:
+        metrics = train_ml_model()
+        if metrics:
+            from model_registry import register_live_as_checkpoint
+
+            register_live_as_checkpoint(metrics)

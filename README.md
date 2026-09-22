@@ -73,7 +73,7 @@ Covers severity rules, Wazuh alert parsing, a **mocked Wazuh API client** (no li
 
 ## Labeling new alerts
 
-To grow the training set with human-reviewed severity labels, copy `data/labeling_template.csv`, fill `severity`, merge into `data/sample_logs.csv` (or train on the labeled file), then retrain and run `evaluate_model.py`. Full steps: [docs/LABELING.md](docs/LABELING.md).
+Customer installs use the shipped model and do not label or upload training CSVs. Lab / developer consoles grow labels from the Labeling page (including CSV import), then train a candidate and activate it. See [docs/LABELING.md](docs/LABELING.md).
 
 ## Model evaluation
 

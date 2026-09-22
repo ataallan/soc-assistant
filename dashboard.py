@@ -25,7 +25,13 @@ from containment import (
     preview_unblock_ip,
     preview_unblock_user,
 )
-from rbac import ROLE_ADMIN, assignee_emails, role_for_identity
+from rbac import (
+    ROLE_ADMIN,
+    ROLE_DEVELOPER,
+    assignee_emails,
+    is_developer_identity,
+    role_for_identity,
+)
 from accounts import (
     AccountExists,
     account_is_active,
@@ -52,6 +58,7 @@ from db import (
     get_case,
     get_db_path,
     get_storage_status,
+    get_triage_event,
     insert_label_queue_items,
     label_queue_counts,
     list_cases,
@@ -82,7 +89,6 @@ from flask_mail import Mail, Message
 # -------------------------------------------------
 try:
     from soc_triage_cli import (
-        train_ml_model,
         watch_csv,
         watch_wazuh,
         stop_csv_watcher,
@@ -288,14 +294,31 @@ def _clear_auth_session() -> None:
         session.pop(key, None)
 
 
+def _stored_account_role(identity: str) -> str:
+    account = get_account(identity) if identity else None
+    if not account:
+        return ""
+    return str(account.get("role") or "").strip().lower()
+
+
+def is_developer_user() -> bool:
+    """Lab training console. Customer admins and analysts are excluded."""
+    identity = session.get("user")
+    if not identity:
+        return False
+    return is_developer_identity(identity, stored_role=_stored_account_role(identity))
+
+
 def current_role() -> str:
     """Recompute role from SOC_ADMIN_EMAILS or the stored account role."""
     identity = session.get("user")
     if role_for_identity(identity) == ROLE_ADMIN:
         return ROLE_ADMIN
-    account = get_account(identity) if identity else None
-    if account and str(account.get("role") or "").lower() == ROLE_ADMIN:
+    stored = _stored_account_role(identity) if identity else ""
+    if stored == ROLE_ADMIN:
         return ROLE_ADMIN
+    if is_developer_identity(identity, stored_role=stored, training_enabled=False):
+        return ROLE_DEVELOPER
     return role_for_identity(identity)
 
 
@@ -336,6 +359,23 @@ def require_admin(f):
         session["role"] = current_role()
         if current_role() != ROLE_ADMIN:
             msg = "Admin role required for this action."
+            if _wants_json():
+                return jsonify({"ok": False, "status": "Forbidden", "message": msg}), 403
+            session["auth_flash"] = {"ok": False, "message": msg}
+            return redirect(_safe_internal_redirect("/"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def require_developer(f):
+    """Lab training console only. Customer admins and analysts are refused."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if "user" not in session:
+            return redirect("/login")
+        session["role"] = current_role()
+        if not is_developer_user():
+            msg = "Developer role required for this action."
             if _wants_json():
                 return jsonify({"ok": False, "status": "Forbidden", "message": msg}), 403
             session["auth_flash"] = {"ok": False, "message": msg}
@@ -420,9 +460,11 @@ def _sync_role_on_request():
         session["role"] = current_role()
         g.current_role = session["role"]
         g.is_admin = session["role"] == ROLE_ADMIN
+        g.is_developer = is_developer_user()
     else:
         g.current_role = None
         g.is_admin = False
+        g.is_developer = False
     g.can_manage_accounts = can_manage_accounts(session.get("user")) if session.get("user") else False
     return _account_gate_response()
 
@@ -436,6 +478,7 @@ def inject_rbac_context():
         "session_user": identity,
         "current_user_role": role,
         "is_admin": role == ROLE_ADMIN,
+        "is_developer": is_developer_user() if "user" in session else False,
         "can_manage_accounts": can_manage_accounts(identity) if identity else False,
         "auth_flash": flash,
         "containment_mode": get_mode(),
@@ -675,13 +718,16 @@ def home():
 # -------------------------------------------------
 @app.route("/train-model", methods=["POST"])
 @login_required
-@require_admin
+@require_developer
 def train_model_route():
-    metrics = train_ml_model("data/sample_logs.csv", combine_labeled=True)
+    """Train a candidate checkpoint. Does not replace the live model."""
+    from model_registry import train_candidate
+
+    metrics = train_candidate("data/sample_logs.csv", "data/labeled_alerts.csv")
     if not metrics:
         return jsonify({"status": "Training failed", "ok": False}), 400
     return jsonify({
-        "status": "Training complete",
+        "status": "Candidate trained",
         "ok": True,
         "metrics": metrics,
     })
@@ -769,6 +815,14 @@ def enrich_triage_rows(rows):
             r["severity_source"] = "rules" if assist_only or disp["low_confidence"] else "ml"
         if r.get("ml_assist") is None:
             r["ml_assist"] = True if assist_only else (not disp["used"])
+        try:
+            from labeling import classify_label_source
+
+            r["label_hint"] = classify_label_source(
+                r, threshold=threshold
+            )
+        except Exception:
+            r["label_hint"] = None
 
         # Surface YAML detection match from raw_json when present
         if not r.get("matched_rule_id") or not r.get("rule_explain"):
@@ -1164,6 +1218,7 @@ def fp_review_page():
 
     events = list_triage_events(view="total", limit=limit)
     rows = aggregate_noisy_rules(events, limit_events=limit, top_n=50)
+    flash = session.pop("fp_flash", None)
     return render_template(
         "fp_review.html",
         user=session.get("user"),
@@ -1171,7 +1226,36 @@ def fp_review_page():
         event_limit=limit,
         event_count=len(events),
         ml_assist_only=get_ml_assist_only(),
+        flash=flash,
     )
+
+
+@app.route("/fp-review/enqueue", methods=["POST"])
+@login_required
+@require_developer
+def fp_review_enqueue():
+    from labeling import enqueue_fp_samples
+
+    rule_key = (request.form.get("rule_key") or "").strip()
+    try:
+        window = int(request.form.get("limit") or 1000)
+    except (TypeError, ValueError):
+        window = 1000
+    window = max(100, min(window, 2000))
+    events = list_triage_events(view="total", limit=window)
+    result = enqueue_fp_samples(events, rule_key, limit=5)
+    inserted = int(result.get("inserted") or 0)
+    skipped = int(result.get("skipped_dupes") or 0)
+    if result.get("reason") == "no_samples":
+        msg = "No samples."
+        ok = False
+    else:
+        msg = f"Queued {inserted}."
+        if skipped:
+            msg = f"Queued {inserted}, skipped {skipped}."
+        ok = True
+    session["fp_flash"] = {"ok": ok, "message": msg}
+    return redirect(f"/fp-review?limit={window}")
 
 
 # -------------------------------------------------
@@ -1179,7 +1263,10 @@ def fp_review_page():
 # -------------------------------------------------
 @app.route("/labels")
 @login_required
+@require_developer
 def labels_page():
+    from model_registry import checkpoint_status
+
     pending = list_label_queue(status="pending")
     counts = label_queue_counts()
     flash = session.pop("labels_flash", None)
@@ -1190,11 +1277,13 @@ def labels_page():
         counts=counts,
         flash=flash,
         ml_assist_only=get_ml_assist_only(),
+        model_status=checkpoint_status(),
     )
 
 
 @app.route("/labels/pull", methods=["POST"])
 @login_required
+@require_developer
 def labels_pull():
     limit = 50
     try:
@@ -1239,10 +1328,12 @@ def labels_pull():
 
 @app.route("/labels/save", methods=["POST"])
 @login_required
+@require_developer
 def labels_save():
-    queue_id = request.form.get("id") or (request.json or {}).get("id")
-    severity = request.form.get("severity") or (request.json or {}).get("severity")
-    notes = request.form.get("notes") or (request.json or {}).get("notes")
+    body = request.get_json(silent=True) or {}
+    queue_id = request.form.get("id") or body.get("id")
+    severity = request.form.get("severity") or body.get("severity")
+    notes = request.form.get("notes") or body.get("notes")
     try:
         out = save_label(int(queue_id), severity, notes=notes)
         msg = f"Labeled #{queue_id} as {severity}."
@@ -1265,9 +1356,11 @@ def labels_save():
 
 @app.route("/labels/skip", methods=["POST"])
 @login_required
+@require_developer
 def labels_skip():
-    queue_id = request.form.get("id") or (request.json or {}).get("id")
-    notes = request.form.get("notes") or (request.json or {}).get("notes")
+    body = request.get_json(silent=True) or {}
+    queue_id = request.form.get("id") or body.get("id")
+    notes = request.form.get("notes") or body.get("notes")
     try:
         out = skip_label(int(queue_id), notes=notes)
         msg = f"Skipped #{queue_id}."
@@ -1290,28 +1383,26 @@ def labels_skip():
 
 @app.route("/labels/retrain", methods=["POST"])
 @login_required
-@require_admin
+@require_developer
 def labels_retrain():
-    """Retrain on sample_logs.csv + labeled_alerts.csv; return metrics toast/JSON."""
+    """Train a candidate checkpoint. Live triage keeps the active model."""
+    from model_registry import train_candidate
+
     try:
-        metrics = train_ml_model(
-            "data/sample_logs.csv",
-            labeled_path="data/labeled_alerts.csv",
-            combine_labeled=True,
-        )
+        metrics = train_candidate("data/sample_logs.csv", "data/labeled_alerts.csv")
         if not metrics:
-            payload = {"ok": False, "message": "Retrain failed."}
+            payload = {"ok": False, "message": "Train failed."}
             status = 400
         else:
             payload = {
                 "ok": True,
-                "message": "Model retrained.",
+                "message": "Candidate trained.",
                 "metrics": metrics,
             }
             status = 200
     except Exception as exc:
-        print(f"Retrain failed: {exc}")
-        payload = {"ok": False, "message": "Retrain failed."}
+        print(f"Train candidate failed: {exc}")
+        payload = {"ok": False, "message": "Train failed."}
         status = 500
 
     wants_json = (
@@ -1326,6 +1417,188 @@ def labels_retrain():
     session["labels_flash"] = {"ok": payload["ok"], "message": payload["message"]}
     return redirect("/labels")
 
+
+@app.route("/labels/activate", methods=["POST"])
+@login_required
+@require_developer
+def labels_activate():
+    """Promote a trained checkpoint to the artifacts live triage loads."""
+    from model_registry import activate_checkpoint, latest_checkpoint
+
+    body = request.get_json(silent=True) or {}
+    checkpoint_id = (request.form.get("id") or body.get("id") or "").strip()
+    if not checkpoint_id:
+        latest = latest_checkpoint()
+        checkpoint_id = str((latest or {}).get("id") or "")
+    if not checkpoint_id:
+        payload = {"ok": False, "message": "No candidate."}
+        status = 400
+    else:
+        try:
+            meta = activate_checkpoint(checkpoint_id)
+            payload = {"ok": True, "message": "Activated.", "active": meta.get("id")}
+            status = 200
+        except Exception as exc:
+            print(f"Activate failed: {exc}")
+            payload = {"ok": False, "message": "Activate failed."}
+            status = 400
+    wants_json = (
+        request.is_json
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or request.args.get("format") == "json"
+        or True
+    )
+    if wants_json:
+        return jsonify(payload), status
+    session["labels_flash"] = {"ok": payload["ok"], "message": payload["message"]}
+    return redirect("/labels")
+
+
+@app.route("/labels/upload", methods=["POST"])
+@login_required
+@require_developer
+def labels_upload():
+    """Merge a labeling CSV into training rows. Developer console only."""
+    from labeling import import_labeled_csv_text
+
+    upload = request.files.get("file")
+    if upload is None or not (upload.filename or "").strip():
+        session["labels_flash"] = {"ok": False, "message": "No file."}
+        return redirect("/labels")
+    raw = upload.read(2_000_001)
+    if len(raw) > 2_000_000:
+        session["labels_flash"] = {"ok": False, "message": "File too large."}
+        return redirect("/labels")
+    text = raw.decode("utf-8-sig", errors="replace")
+    result = import_labeled_csv_text(text)
+    session["labels_flash"] = {
+        "ok": bool(result.get("ok")),
+        "message": result.get("message") or "Import failed.",
+    }
+    return redirect("/labels")
+
+
+@app.route("/labels/bulk", methods=["POST"])
+@login_required
+@require_developer
+def labels_bulk():
+    from labeling import apply_bulk_labels
+
+    body = request.get_json(silent=True) or {}
+    ids = body.get("ids") if isinstance(body, dict) else None
+    if not ids:
+        ids = request.form.getlist("ids")
+    action = (body.get("action") if isinstance(body, dict) else None) or request.form.get("action")
+    severity = (body.get("severity") if isinstance(body, dict) else None) or request.form.get("severity")
+    result = apply_bulk_labels(ids or [], action or "", severity)
+    msg = f"Updated {result.get('updated', 0)}."
+    wants_json = (
+        request.is_json
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or request.args.get("format") == "json"
+    )
+    if wants_json:
+        return jsonify({"ok": bool(result.get("updated")), "message": msg, **result})
+    session["labels_flash"] = {"ok": bool(result.get("updated")), "message": msg}
+    return redirect("/labels")
+
+
+def _labels_redirect_back(default: str = "/labels"):
+    wants_json = (
+        request.is_json
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or request.args.get("format") == "json"
+    )
+    return wants_json, default
+
+
+@app.route("/labels/from-event", methods=["POST"])
+@login_required
+@require_developer
+def labels_from_event():
+    from labeling import classify_label_source, enqueue_for_label, item_from_triage, submit_correct_label
+
+    body = request.get_json(silent=True) or {}
+    raw_id = request.form.get("triage_event_id") or body.get("triage_event_id") or body.get("id")
+    severity = request.form.get("severity") or body.get("severity")
+    queue_only = str(request.form.get("queue_only") or body.get("queue_only") or "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    try:
+        event = get_triage_event(int(raw_id))
+    except (TypeError, ValueError):
+        event = None
+    if not event:
+        session["labels_flash"] = {"ok": False, "message": "Event not found."}
+        return redirect(_safe_internal_redirect("/report"))
+    item = item_from_triage(event)
+    try:
+        if queue_only or not (severity or "").strip():
+            source = classify_label_source(event) or "triage"
+            result = enqueue_for_label(item, source)
+            if result.get("inserted"):
+                msg = "Queued."
+            else:
+                msg = "Already queued."
+            ok = True
+        else:
+            displayed = str(event.get("severity") or "").strip().lower()
+            source = "correction" if str(severity).strip().lower() != displayed else "triage"
+            result = submit_correct_label(item, severity, source=source)
+            msg = "Labeled." if result.get("labeled") else "Already labeled."
+            ok = True
+    except Exception as exc:
+        result = {"ok": False}
+        msg = f"Could not queue: {exc}"
+        ok = False
+    wants_json, _default = _labels_redirect_back("/report")
+    if wants_json:
+        return jsonify({"ok": ok, "message": msg, **result}), (200 if ok else 400)
+    session["auth_flash"] = {"ok": ok, "message": msg}
+    return redirect(_safe_internal_redirect("/report"))
+
+
+@app.route("/labels/from-case", methods=["POST"])
+@login_required
+@require_developer
+def labels_from_case():
+    from labeling import enqueue_for_label, item_from_case, submit_correct_label
+
+    body = request.get_json(silent=True) or {}
+    raw_id = request.form.get("case_id") or body.get("case_id")
+    severity = request.form.get("severity") or body.get("severity")
+    queue_only = str(request.form.get("queue_only") or body.get("queue_only") or "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    try:
+        case = get_case(int(raw_id), include_notes=False)
+    except (TypeError, ValueError):
+        case = None
+    if not case:
+        session["cases_flash"] = {"ok": False, "message": "Case not found."}
+        return redirect("/cases")
+    item = item_from_case(case)
+    back = f"/cases/{case['id']}"
+    try:
+        if queue_only or not (severity or "").strip():
+            result = enqueue_for_label(item, "case")
+            msg = "Queued." if result.get("inserted") else "Already queued."
+            ok = True
+        else:
+            displayed = str(case.get("severity") or "").strip().lower()
+            source = "correction" if str(severity).strip().lower() != displayed else "case"
+            result = submit_correct_label(item, severity, source=source)
+            msg = "Labeled." if result.get("labeled") else "Already labeled."
+            ok = True
+    except Exception as exc:
+        result = {}
+        msg = f"Could not queue: {exc}"
+        ok = False
+    wants_json, _default = _labels_redirect_back(back)
+    if wants_json:
+        return jsonify({"ok": ok, "message": msg, **result}), (200 if ok else 400)
+    session["cases_flash"] = {"ok": ok, "message": msg}
+    return redirect(back)
 
 
 # -------------------------------------------------

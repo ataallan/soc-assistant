@@ -1,59 +1,46 @@
-# Alert labeling workflow
+# Alert labeling (developer / lab only)
 
-Use this process to grow the training set with analyst-reviewed severity labels.
+Customers use the shipped model (`soc_model.pkl` and the matching vectorizer, scaler, and label encoder). The customer console has no Labeling page, no CSV upload, no train or activate actions, and no “send to training” controls.
 
-## Live Wazuh labeling (dashboard)
+Training stays on the lab console. Open it with any one of:
 
-1. Sign in to the SOC dashboard.
-2. Open **Labeling** in the navbar (`/labels`).
-3. Click **Pull from Wazuh** to enqueue recent alert details (deduped by summary + full log).
-4. For each pending row, choose **low / medium / high / critical** (or **Skip**).
-5. Saves update:
-   - `label_queue` (status → labeled/skipped)
-   - `alerts_labeled` table
-   - `data/labeled_alerts.csv` (training columns: `timestamp,source_ip,username,event_type,severity,description`)
-6. Click **Retrain model** (`POST /labels/retrain`) to train on `sample_logs.csv` + `labeled_alerts.csv` and refresh model artifacts. A toast shows CV macro F1 and sample count.
+- a stored account role of `developer`
+- `SOC_DEVELOPER_EMAILS` (comma-separated logins)
+- `SOC_DEV_TRAINING=true` on a lab machine only
 
-ML stays **assist-only** by default (`ML_ASSIST_ONLY=true`): rules remain the operator-facing severity; ML is shown as assist with confidence (or “Low confidence — not used”).
+Admin and analyst accounts do not get these controls. Leave the settings unset on customer installs.
 
-## Manual CSV labeling (offline)
+ML stays **assist-only** by default (`ML_ASSIST_ONLY=true`). Activating a checkpoint swaps artifacts only. It does not turn on ML override.
 
-### 1. Export alerts to label
+## Labeling page
 
-- Copy `data/labeling_template.csv` (or export recent rows from triage / Wazuh into the same column shape).
-- Required columns for training: `timestamp`, `source_ip`, `username`, `event_type`, `severity`, `description`.
-- Optional: `analyst_notes`, `label_source` (e.g. `human`, `wazuh`, `template`).
+1. Open **Labeling** (`/labels`).
+2. **Pull from Wazuh** enqueues recent alerts (deduped by summary + full log).
+3. Pending rows: **1–4** set severity, **S** skips, **Enter** moves to the next row. Bulk Label / Skip applies to checked rows.
+4. Saves update `label_queue`, `alerts_labeled`, and `data/labeled_alerts.csv` (`timestamp,source_ip,username,event_type,severity,description`).
 
-### 2. Fill severity
+## Other ways in
 
-For each row, set `severity` to one of:
+| Source | What happens |
+| --- | --- |
+| Triage report / case | Pick severity and **Label**. Same queue and training tables. Duplicates are skipped. |
+| Disagree / Low conf | **Queue** sends the event in as `disagreement` or `low_confidence`. Disagreements may also auto-queue, capped (`LABEL_DISAGREEMENT_CAP`, default 20) and deduped. Low confidence is manual. |
+| False positives | **Enqueue** on a noisy rule adds up to five recent samples (`fp_review`). |
+| CSV | **Import** on Labeling. Header must include `timestamp,source_ip,username,event_type,severity,description`. Optional `analyst_notes`, `label_source`. Invalid severities and empty rows are rejected; the page shows accepted and rejected counts. |
 
-`low` · `medium` · `high` · `critical`
+## Train and activate
 
-Tips:
+- **Train candidate** writes `models/checkpoints/<id>/` and leaves the live model in place.
+- **Activate** copies that checkpoint onto `soc_model.pkl`, `vectorizer.pkl`, `scaler.pkl`, and `label_encoder.pkl`, then reloads triage.
+- The page shows the active name/time and the latest trained name/time.
 
-- Prefer the **final** analyst judgment over the model’s first guess.
-- Leave a short note in `analyst_notes` when the label is non-obvious.
-- Do not invent IPs or users you did not observe — keep fields empty if unknown.
-
-### 3. Merge into training data
-
-Either:
-
-- Append labeled rows into `data/sample_logs.csv` (same core columns), **or**
-- Save as `data/labeled_alerts.csv` and use dashboard **Retrain** / `train_ml_model(..., combine_labeled=True)`.
-
-### 4. Retrain and evaluate
+CLI (lab machines):
 
 ```bash
-python train_model.py
-# or from the dashboard: Train model / Labeling → Retrain
-
+python train_model.py              # writes live artifacts and records the checkpoint
+python train_model.py --candidate  # checkpoint only
+python train_model.py --activate CHECKPOINT_ID
 python evaluate_model.py
 ```
 
-Review `docs/evaluation_report.md` and `docs/MODEL_ASSESSMENT.md` before treating scores as production-ready.
-
-### 5. Watch again
-
-Restart the CSV or Wazuh watcher so new events use the updated model artifacts (`soc_model.pkl`, `vectorizer.pkl`, `scaler.pkl`, `label_encoder.pkl`).
+`evaluate_model.py` does not replace the live model.

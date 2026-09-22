@@ -137,6 +137,12 @@ class LabelQueue(Base):
     label_severity: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     labeled_at: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_ip: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    username: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    event_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    event_timestamp: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    triage_event_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    case_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
 class AlertsLabeled(Base):
@@ -439,6 +445,12 @@ def _soft_migrate_columns(engine: Engine) -> None:
             "ALTER TABLE cases ADD COLUMN IF NOT EXISTS domain TEXT",
             "ALTER TABLE cases ADD COLUMN IF NOT EXISTS cve TEXT",
             "ALTER TABLE cases ADD COLUMN IF NOT EXISTS observables TEXT",
+            "ALTER TABLE label_queue ADD COLUMN IF NOT EXISTS source_ip TEXT",
+            "ALTER TABLE label_queue ADD COLUMN IF NOT EXISTS username TEXT",
+            "ALTER TABLE label_queue ADD COLUMN IF NOT EXISTS event_type TEXT",
+            "ALTER TABLE label_queue ADD COLUMN IF NOT EXISTS event_timestamp TEXT",
+            "ALTER TABLE label_queue ADD COLUMN IF NOT EXISTS triage_event_id INTEGER",
+            "ALTER TABLE label_queue ADD COLUMN IF NOT EXISTS case_id INTEGER",
         ]
         try:
             with engine.begin() as conn:
@@ -471,6 +483,14 @@ def _soft_migrate_columns(engine: Engine) -> None:
             "domain": "TEXT",
             "cve": "TEXT",
             "observables": "TEXT",
+        },
+        "label_queue": {
+            "source_ip": "TEXT",
+            "username": "TEXT",
+            "event_type": "TEXT",
+            "event_timestamp": "TEXT",
+            "triage_event_id": "INTEGER",
+            "case_id": "INTEGER",
         },
     }
     with engine.begin() as conn:
@@ -1014,6 +1034,12 @@ def _label_queue_to_dict(row: LabelQueue) -> Dict[str, Any]:
         "label_severity": row.label_severity,
         "labeled_at": row.labeled_at,
         "notes": row.notes,
+        "source_ip": getattr(row, "source_ip", None),
+        "username": getattr(row, "username", None),
+        "event_type": getattr(row, "event_type", None),
+        "event_timestamp": getattr(row, "event_timestamp", None),
+        "triage_event_id": getattr(row, "triage_event_id", None),
+        "case_id": getattr(row, "case_id", None),
     }
 
 
@@ -1023,25 +1049,36 @@ def _dedupe_key(summary: Optional[str], full_log: Optional[str]) -> str:
     return f"{s}\n{f}"
 
 
+def _optional_int(value: Any) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def insert_label_queue_items(
     items: List[Dict[str, Any]],
     *,
     db_path: Optional[Path | str] = None,
     source: str = "wazuh",
-) -> Dict[str, int]:
+) -> Dict[str, Any]:
     """Insert new pending label-queue rows; dedupe by summary+full_log.
 
-    Returns counts: inserted, skipped_dupes, total_seen.
+    Returns counts: inserted, skipped_dupes, total_seen, plus ids and duplicate_ids.
     """
     init_db(db_path)
     inserted = 0
     skipped = 0
     seen = 0
+    ids: List[int] = []
+    duplicate_ids: List[int] = []
     with _lock:
         with session_scope(db_path) as session:
             existing_rows = session.scalars(select(LabelQueue)).all()
             existing_keys = {
-                _dedupe_key(r.summary, r.full_log) for r in existing_rows
+                _dedupe_key(r.summary, r.full_log): int(r.id) for r in existing_rows
             }
             for item in items or []:
                 seen += 1
@@ -1050,12 +1087,16 @@ def insert_label_queue_items(
                 key = _dedupe_key(summary, full_log)
                 if not key.strip() or key in existing_keys:
                     skipped += 1
+                    if key.strip() and key in existing_keys:
+                        duplicate_ids.append(existing_keys[key])
                     continue
-                existing_keys.add(key)
                 level = item.get("rule_level")
+                row_source = source or item.get("source") or "wazuh"
+                if item.get("source"):
+                    row_source = item.get("source")
                 row = LabelQueue(
                     created_at=_utc_now_iso(),
-                    source=source or item.get("source") or "wazuh",
+                    source=row_source,
                     summary=summary,
                     full_log=full_log,
                     agent=item.get("agent"),
@@ -1063,10 +1104,25 @@ def insert_label_queue_items(
                     rule_level=str(level) if level is not None else None,
                     wazuh_severity=item.get("severity") or item.get("wazuh_severity"),
                     status="pending",
+                    source_ip=(item.get("source_ip") or None) or None,
+                    username=(item.get("username") or None) or None,
+                    event_type=(item.get("event_type") or None) or None,
+                    event_timestamp=(item.get("event_timestamp") or item.get("timestamp") or None) or None,
+                    triage_event_id=_optional_int(item.get("triage_event_id")),
+                    case_id=_optional_int(item.get("case_id")),
                 )
                 session.add(row)
+                session.flush()
+                existing_keys[key] = int(row.id)
+                ids.append(int(row.id))
                 inserted += 1
-    return {"inserted": inserted, "skipped_dupes": skipped, "total_seen": seen}
+    return {
+        "inserted": inserted,
+        "skipped_dupes": skipped,
+        "total_seen": seen,
+        "ids": ids,
+        "duplicate_ids": duplicate_ids,
+    }
 
 
 def list_label_queue(
@@ -1129,22 +1185,28 @@ def save_label(
                 row.notes = notes
 
             summary = row.summary or row.full_log or ""
+            event_type = (getattr(row, "event_type", None) or "").strip()
+            if not event_type:
+                event_type = f"wazuh_rule_{row.rule_id}" if row.rule_id else "wazuh_alert"
             training = {
-                "timestamp": now,
-                "source_ip": "",
-                "username": "",
-                "event_type": f"wazuh_rule_{row.rule_id}" if row.rule_id else "wazuh_alert",
+                "timestamp": (getattr(row, "event_timestamp", None) or "").strip() or now,
+                "source_ip": (getattr(row, "source_ip", None) or "").strip(),
+                "username": (getattr(row, "username", None) or "").strip(),
+                "event_type": event_type,
                 "severity": sev,
                 "description": summary,
             }
-            # Best-effort IP/user extraction from text
-            try:
-                from nlp_utils import extract_ip, extract_user
-                text_blob = f"{row.full_log or ''} {row.summary or ''}"
-                training["source_ip"] = extract_ip(text_blob) or ""
-                training["username"] = extract_user(text_blob) or ""
-            except Exception:
-                pass
+            # Best-effort IP/user extraction from text when the queue row has none
+            if not training["source_ip"] or not training["username"]:
+                try:
+                    from nlp_utils import extract_ip, extract_user
+                    text_blob = f"{row.full_log or ''} {row.summary or ''}"
+                    if not training["source_ip"]:
+                        training["source_ip"] = extract_ip(text_blob) or ""
+                    if not training["username"]:
+                        training["username"] = extract_user(text_blob) or ""
+                except Exception:
+                    pass
 
             labeled = AlertsLabeled(
                 timestamp=training["timestamp"],
@@ -1222,6 +1284,117 @@ def export_labeled_alerts_csv(
         for rec in records:
             writer.writerow(rec)
     return len(records)
+
+
+def count_label_queue(
+    *,
+    status: str = "pending",
+    source: Optional[str] = None,
+    db_path: Optional[Path | str] = None,
+) -> int:
+    init_db(db_path)
+    with _lock:
+        with session_scope(db_path) as session:
+            stmt = select(func.count()).select_from(LabelQueue)
+            if status:
+                stmt = stmt.where(LabelQueue.status == status)
+            if source:
+                stmt = stmt.where(LabelQueue.source == source)
+            return int(session.scalar(stmt) or 0)
+
+
+def get_triage_event(
+    event_id: int,
+    *,
+    db_path: Optional[Path | str] = None,
+) -> Optional[Dict[str, Any]]:
+    init_db(db_path)
+    with _lock:
+        with session_scope(db_path) as session:
+            row = session.get(TriageEvent, int(event_id))
+            if row is None:
+                return None
+            return _triage_to_dict(row)
+
+
+def _labeled_dedupe_key(row: Dict[str, Any]) -> str:
+    parts = [
+        str(row.get("timestamp") or "").strip(),
+        str(row.get("source_ip") or "").strip(),
+        str(row.get("username") or "").strip(),
+        str(row.get("event_type") or "").strip(),
+        str(row.get("severity") or "").strip().lower(),
+        str(row.get("description") or "").strip(),
+    ]
+    return "\n".join(parts)
+
+
+def insert_labeled_training_rows(
+    rows: List[Dict[str, Any]],
+    *,
+    db_path: Optional[Path | str] = None,
+    append_csv: bool = True,
+) -> Dict[str, int]:
+    """Merge already-labeled training rows into alerts_labeled. Dedupes on the six columns."""
+    init_db(db_path)
+    inserted = 0
+    skipped = 0
+    written: List[Dict[str, Any]] = []
+    with _lock:
+        with session_scope(db_path) as session:
+            existing = session.scalars(select(AlertsLabeled)).all()
+            keys = {_labeled_dedupe_key(_alerts_labeled_training_dict(r)) for r in existing}
+            now = _utc_now_iso()
+            for row in rows or []:
+                sev = str(row.get("severity") or "").strip().lower()
+                if sev not in VALID_LABEL_SEVERITIES:
+                    skipped += 1
+                    continue
+                training = {
+                    "timestamp": str(row.get("timestamp") or "").strip() or now,
+                    "source_ip": str(row.get("source_ip") or "").strip(),
+                    "username": str(row.get("username") or "").strip(),
+                    "event_type": str(row.get("event_type") or "").strip(),
+                    "severity": sev,
+                    "description": str(row.get("description") or "").strip(),
+                }
+                key = _labeled_dedupe_key(training)
+                if not training["description"] and not training["event_type"]:
+                    skipped += 1
+                    continue
+                if key in keys:
+                    skipped += 1
+                    continue
+                keys.add(key)
+                labeled = AlertsLabeled(
+                    timestamp=training["timestamp"],
+                    source_ip=training["source_ip"] or None,
+                    username=training["username"] or None,
+                    event_type=training["event_type"] or None,
+                    severity=sev,
+                    description=training["description"] or None,
+                    label_source=(str(row.get("label_source") or "csv").strip() or "csv"),
+                    queue_id=_optional_int(row.get("queue_id")),
+                    created_at=now,
+                )
+                session.add(labeled)
+                written.append(training)
+                inserted += 1
+    if append_csv:
+        for training in written:
+            _append_labeled_csv(training)
+    return {"inserted": inserted, "skipped_dupes": skipped}
+
+
+def _alerts_labeled_training_dict(row: AlertsLabeled) -> Dict[str, Any]:
+    return {
+        "timestamp": row.timestamp,
+        "source_ip": row.source_ip or "",
+        "username": row.username or "",
+        "event_type": row.event_type or "",
+        "severity": row.severity or "",
+        "description": row.description or "",
+    }
 
 
 def label_queue_counts(db_path: Optional[Path | str] = None) -> Dict[str, int]:

@@ -24,8 +24,14 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Trained models (regenerate with train_model.py)
+# Trained models (regenerate with train_model.py).
+# Root artifacts are the shipped customer model. Checkpoints stay local.
 *.pkl
+!soc_model.pkl
+!vectorizer.pkl
+!scaler.pkl
+!label_encoder.pkl
+models/
 
 # Generated / runtime data (keep sample_logs.csv)
 data/triage_report.csv

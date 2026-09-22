@@ -43,6 +43,7 @@
                         <th>IP</th>
                         <th>Host</th>
                         <th>Case</th>
+                        {% if is_developer %}<th>Label</th>{% endif %}
                     </tr>
                 </thead>
                 <tbody>
@@ -104,11 +105,41 @@
                               <span class="text-secondary">—</span>
                             {% endif %}
                         </td>
+                        {% if is_developer %}
+                        <td style="min-width:11rem;">
+                            {% if row.id %}
+                            <form method="POST" action="/labels/from-event" class="d-flex flex-wrap gap-1 align-items-center mb-1">
+                              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                              <input type="hidden" name="triage_event_id" value="{{ row.id }}">
+                              <select name="severity" class="form-select form-select-sm" style="width:6.6rem;" required>
+                                <option value="" disabled selected>Severity</option>
+                                <option value="low">low</option>
+                                <option value="medium">medium</option>
+                                <option value="high">high</option>
+                                <option value="critical">critical</option>
+                              </select>
+                              <button type="submit" class="btn btn-sm btn-outline-primary">Label</button>
+                            </form>
+                            {% if row.label_hint %}
+                            <form method="POST" action="/labels/from-event" class="d-inline">
+                              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                              <input type="hidden" name="triage_event_id" value="{{ row.id }}">
+                              <input type="hidden" name="queue_only" value="1">
+                              <button type="submit" class="btn btn-sm btn-outline-secondary">
+                                {% if row.label_hint == 'disagreement' %}Disagree{% else %}Low conf{% endif %}
+                              </button>
+                            </form>
+                            {% endif %}
+                            {% else %}
+                              <span class="text-secondary">—</span>
+                            {% endif %}
+                        </td>
+                        {% endif %}
                     </tr>
                     {% endfor %}
                     {% else %}
                     <tr>
-                        <td colspan="10" class="text-center text-secondary py-4">
+                        <td colspan="{% if is_developer %}11{% else %}10{% endif %}" class="text-center text-secondary py-4">
                             No alerts in this view.
                         </td>
                     </tr>

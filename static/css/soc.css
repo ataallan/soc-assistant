@@ -913,6 +913,29 @@ code {
   background: rgba(59, 130, 246, 0.12);
   border-color: rgba(59, 130, 246, 0.35);
 }
+.role-chip.role-developer {
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.label-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.label-actions kbd {
+  font-size: 0.68rem;
+  padding: 0 0.25rem;
+  border-radius: 3px;
+  border: 1px solid var(--soc-border);
+  color: var(--soc-muted);
+  background: transparent;
+}
+tr.label-focus {
+  outline: 1px solid var(--soc-accent);
+  outline-offset: -1px;
+}
 
 
 /* Company footer */
