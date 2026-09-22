@@ -1,5 +1,7 @@
 # Deploy on Windows (keep the dashboard running)
 
+Customer PCs should use **AIPoweredSOCAssistantSetup.exe**. See [INSTALLER.md](INSTALLER.md). This page is the always-on scheduled task for a development checkout.
+
 The AI-Powered SOC Assistant is a Flask app. On Windows, the most reliable
 "always on" option for a single workstation is a **Scheduled Task** (not a
 classic Service). That avoids NSSM and keeps paths/venv simple.

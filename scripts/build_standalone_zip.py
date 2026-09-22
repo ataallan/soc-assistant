@@ -25,6 +25,9 @@ SKIP_DIR_NAMES = {
     ".cursor",
     "ultralytics",
     "runs",
+    "installer",
+    "dist",
+    ".github",
 }
 SKIP_FILE_NAMES = {
     ".env",

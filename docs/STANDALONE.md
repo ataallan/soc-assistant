@@ -1,6 +1,8 @@
 # Standalone install (any Windows laptop)
 
-Run **AI-Powered SOC Assistant** from a copied folder or zip. Unzip, install Python packages into `.venv`, start `dashboard.py`, and open a browser to the login page. There is no bundled password and no bundled mail or tunnel secret.
+Customers who received **AIPoweredSOCAssistantSetup.exe** should follow [INSTALLER.md](INSTALLER.md). That setup program installs the app, adds one Desktop icon, and does not ask you to unzip a project folder.
+
+The steps below are the alternate folder install, for a copied project directory or zip. Unzip, install Python packages into `.venv`, start `dashboard.py`, and open a browser to the login page. There is no bundled password and no bundled mail or tunnel secret.
 
 Account approval and email login codes stay as they are. The first **Create account** is the site admin and can sign in immediately. Later accounts stay pending until that admin approves them on **Accounts**. Approved users confirm a one-time code sent to their login email.
 

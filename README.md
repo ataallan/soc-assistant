@@ -181,9 +181,13 @@ Automatic IP/user blocks from triage **require rule + ML agreement** (or rules m
 
 Capstone / academic use. Contact the author for other licensing.
 
+## Windows Setup installer
+
+Customers run **AIPoweredSOCAssistantSetup.exe**. It installs under `%LocalAppData%\AIPoweredSOCAssistant`, adds one Desktop icon named **AI-Powered SOC Assistant** (company logo), and adds a Start menu entry and an uninstaller. The first launch starts the dashboard at http://127.0.0.1:5000/login and opens the browser. Later launches use that Desktop icon. Build steps and customer install steps: [docs/INSTALLER.md](docs/INSTALLER.md).
+
 ## Start on Windows
 
-After `install_and_run.bat`, double-click the Desktop shortcut **AI-Powered SOC Assistant** (company-logo icon). That runs `Start AI-Powered SOC Assistant.bat`, starts the dashboard, and opens http://127.0.0.1:5000/login. It does not reinstall packages. `start_dashboard.bat` calls the same launcher.
+After `install_and_run.bat` (unzipped folder) or the Setup wizard, double-click the Desktop shortcut **AI-Powered SOC Assistant** (company-logo icon). That starts the dashboard and opens http://127.0.0.1:5000/login. It does not reinstall packages. The unzipped-folder shortcut runs `Start AI-Powered SOC Assistant.bat`. `start_dashboard.bat` calls the same launcher.
 
 ## Keep running on Windows
 
@@ -200,7 +204,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install_windows_task.ps1
 
 ## Standalone laptop install
 
-Unzip and run [`install_and_run.bat`](install_and_run.bat). The first run creates `.venv`, installs `requirements.txt`, writes `install.log`, and adds **AI-Powered SOC Assistant** shortcuts on the Desktop and in the product folder. The shortcut icon is `static/img/ai-powered-soc-assistant.ico`, built from the Mun Cyber Technologies logo. See [docs/STANDALONE.md](docs/STANDALONE.md).
+The customer setup program is [docs/INSTALLER.md](docs/INSTALLER.md). For a copied project folder, unzip and run [`install_and_run.bat`](install_and_run.bat). The first run creates `.venv`, installs `requirements.txt`, writes `install.log`, and adds **AI-Powered SOC Assistant** shortcuts on the Desktop and in the product folder. The shortcut icon is `static/img/ai-powered-soc-assistant.ico`, built from the Mun Cyber Technologies logo. See [docs/STANDALONE.md](docs/STANDALONE.md).
 
 Build the customer zip from a checkout (includes the icon, `install_and_run.bat`, and `Start AI-Powered SOC Assistant.bat`; excludes `.env`, `.venv`, and tunnel tokens):
 

@@ -1,0 +1,59 @@
+name: Windows installer
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "installer/**"
+      - "scripts/stage_installer_payload.py"
+      - "scripts/build_windows_installer.ps1"
+      - "scripts/standalone_support.py"
+      - "requirements.txt"
+      - "static/img/ai-powered-soc-assistant.ico"
+      - ".github/workflows/windows-installer.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "installer/**"
+      - "scripts/stage_installer_payload.py"
+      - "scripts/build_windows_installer.ps1"
+      - "scripts/standalone_support.py"
+      - "requirements.txt"
+      - "static/img/ai-powered-soc-assistant.ico"
+      - ".github/workflows/windows-installer.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  setup-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Inno Setup 6
+        shell: pwsh
+        run: |
+          $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
+          $dest = Join-Path $env:TEMP "innosetup-6.7.3.exe"
+          Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+          $proc = Start-Process -FilePath $dest -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait -PassThru
+          if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) { exit $proc.ExitCode }
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path -LiteralPath $iscc)) {
+            throw "ISCC.exe was not installed"
+          }
+
+      - name: Build AIPoweredSOCAssistantSetup.exe
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_windows_installer.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AIPoweredSOCAssistantSetup
+          path: dist/AIPoweredSOCAssistantSetup.exe
+          if-no-files-found: error
