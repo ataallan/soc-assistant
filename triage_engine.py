@@ -154,17 +154,35 @@ def format_ml_assist_display(
 
 # -------------------- Helper Functions --------------------
 
+def _artifact_paths():
+    """Live artifact paths. SOC_MODEL_ROOT overrides the process working directory."""
+    root = (os.environ.get("SOC_MODEL_ROOT") or "").strip()
+    names = (MODEL_FILE, VECTORIZER_FILE, SCALER_FILE, LABEL_ENCODER_FILE)
+    if not root:
+        return names
+    base = os.path.abspath(root)
+    return tuple(os.path.join(base, name) for name in names)
+
+
 def load_ml_model():
     """Load trained ML model and preprocessing objects."""
-    if not all(os.path.exists(f) for f in [MODEL_FILE, VECTORIZER_FILE, SCALER_FILE, LABEL_ENCODER_FILE]):
+    paths = _artifact_paths()
+    if not all(os.path.exists(f) for f in paths):
         print("⚠️ ML model or dependencies not found. Falling back to rule-based.")
         return None, None, None, None
 
-    model = joblib.load(MODEL_FILE)
-    vectorizer = joblib.load(VECTORIZER_FILE)
-    scaler = joblib.load(SCALER_FILE)
-    label_encoder = joblib.load(LABEL_ENCODER_FILE)
+    model = joblib.load(paths[0])
+    vectorizer = joblib.load(paths[1])
+    scaler = joblib.load(paths[2])
+    label_encoder = joblib.load(paths[3])
     return model, vectorizer, scaler, label_encoder
+
+
+def reload_ml_model():
+    """Reload live artifacts after a checkpoint is activated."""
+    global ML_MODEL, VECTORIZER, SCALER, LABEL_ENCODER
+    ML_MODEL, VECTORIZER, SCALER, LABEL_ENCODER = load_ml_model()
+    return ML_MODEL is not None
 
 # Load model at import
 ML_MODEL, VECTORIZER, SCALER, LABEL_ENCODER = load_ml_model()

@@ -130,7 +130,7 @@ def test_operator_pages_omit_tutorial_copy(app_client):
     with client.session_transaction() as sess:
         sess["user"] = "ops@example.com"
 
-    paths = ["/", "/blocks", "/labels", "/report", "/fp-review", "/cases", "/analytics", "/logs/csv"]
+    paths = ["/", "/blocks", "/report", "/fp-review", "/cases", "/analytics", "/logs/csv"]
     with patch.object(dashboard, "get_token", return_value=None), patch.object(
         dashboard, "get_last_auth_error", return_value=None
     ), patch.object(dashboard, "fetch_wazuh_alert_details", return_value=[]):
@@ -147,3 +147,9 @@ def test_operator_pages_omit_tutorial_copy(app_client):
     blocks = pages["/blocks"].data.decode("utf-8")
     assert "Simulation mode" in blocks
     assert "mode-pill" in blocks
+
+    labels = client.get("/labels")
+    assert labels.status_code in (302, 403)
+    home = pages["/"].data.decode("utf-8")
+    assert 'href="/labels"' not in home
+    assert "Train model" not in home

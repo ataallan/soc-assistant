@@ -13,6 +13,7 @@ from typing import Iterable, List, Optional, Set
 
 ROLE_ADMIN = "admin"
 ROLE_ANALYST = "analyst"
+ROLE_DEVELOPER = "developer"
 
 
 def _parse_email_list(value: Optional[str]) -> Set[str]:
@@ -26,6 +27,53 @@ def parse_admin_emails(value: Optional[str] = None) -> Set[str]:
     if value is None:
         value = os.environ.get("SOC_ADMIN_EMAILS", "")
     return _parse_email_list(value)
+
+
+def parse_developer_emails(value: Optional[str] = None) -> Set[str]:
+    """Parse SOC_DEVELOPER_EMAILS into a lowercase set.
+
+    These identities may open the lab training console. Admin emails are not
+    included unless they are listed here as well.
+    """
+    if value is None:
+        value = os.environ.get("SOC_DEVELOPER_EMAILS", "")
+    return _parse_email_list(value)
+
+
+def training_console_enabled(value: Optional[str] = None) -> bool:
+    """Lab switch SOC_DEV_TRAINING. Off by default so customer installs stay closed."""
+    if value is None:
+        value = os.environ.get("SOC_DEV_TRAINING", "")
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def is_developer_identity(
+    identity: Optional[str],
+    *,
+    stored_role: Optional[str] = None,
+    developer_emails: Optional[Iterable[str]] = None,
+    training_enabled: Optional[bool] = None,
+) -> bool:
+    """True for lab training access.
+
+    Granted by a stored ``developer`` role, ``SOC_DEVELOPER_EMAILS``, or the
+    lab-wide ``SOC_DEV_TRAINING`` switch. Customer admins and analysts are not
+    developers unless one of those is set.
+    """
+    if training_enabled is None:
+        training_enabled = training_console_enabled()
+    if training_enabled and identity and str(identity).strip():
+        return True
+    emails = (
+        {e.strip().lower() for e in developer_emails if e and str(e).strip()}
+        if developer_emails is not None
+        else parse_developer_emails()
+    )
+    if identity and identity.strip().lower() in emails:
+        return True
+    if stored_role is not None and str(stored_role).strip().lower() == ROLE_DEVELOPER:
+        return True
+    return False
 
 
 def parse_analyst_emails(value: Optional[str] = None) -> Set[str]:

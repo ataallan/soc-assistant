@@ -73,7 +73,7 @@ def test_require_admin_blocks_analyst_train(rbac_client):
     assert resp.status_code == 403
     data = resp.get_json()
     assert data["ok"] is False
-    assert "admin" in data["message"].lower()
+    assert "developer" in data["message"].lower()
 
 
 def test_require_admin_allows_admin_backup(rbac_client):

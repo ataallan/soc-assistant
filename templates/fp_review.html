@@ -12,9 +12,17 @@
     <a class="btn btn-outline-secondary btn-sm" href="/fp-review?limit=500">Last 500</a>
     <a class="btn btn-outline-secondary btn-sm" href="/fp-review?limit=1000">Last 1000</a>
     <a class="btn btn-outline-secondary btn-sm" href="/fp-review?limit=2000">Last 2000</a>
+    {% if is_developer %}
     <a class="btn btn-outline-primary btn-sm" href="/labels">Labeling</a>
+    {% endif %}
   </div>
 </div>
+
+{% if flash %}
+<div class="notice-bar mb-3 {% if not flash.ok %}border-danger{% endif %}">
+  {{ flash.message }}
+</div>
+{% endif %}
 
 <div class="soc-panel">
   <h4 class="mb-3" style="font-size:1.05rem;">Noisy rules (by volume)</h4>
@@ -28,6 +36,7 @@
           <th style="width:8rem;">Low / ignore</th>
           <th style="width:6rem;">% low</th>
           <th>Sample log</th>
+          {% if is_developer %}<th style="width:7rem;"></th>{% endif %}
         </tr>
       </thead>
       <tbody>
@@ -48,6 +57,16 @@
           <td style="max-width:520px;white-space:normal;" class="small text-secondary">
             {{ row.sample_log or '—' }}
           </td>
+          {% if is_developer %}
+          <td>
+            <form method="POST" action="/fp-review/enqueue">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="rule_key" value="{{ row.rule_key }}">
+              <input type="hidden" name="limit" value="{{ event_limit }}">
+              <button type="submit" class="btn btn-sm btn-outline-primary">Enqueue</button>
+            </form>
+          </td>
+          {% endif %}
         </tr>
         {% endfor %}
       </tbody>

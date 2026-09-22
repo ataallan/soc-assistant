@@ -125,23 +125,10 @@
 
 <!-- Ops control bar -->
 <div class="ops-bar mb-4">
-    {% if is_admin %}
+    {% if is_developer %}
     <div class="ops-group">
-        <span class="ops-label">Train</span>
-        <form onsubmit="handleForm(event, '/train-model')" class="d-inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-sm btn-success">
-                Train model
-                <span id="status-ml" class="status-indicator status-idle ms-1">Idle</span>
-            </button>
-        </form>
-    </div>
-    <div class="ops-divider d-none d-md-block"></div>
-    {% else %}
-    <div class="ops-group">
-        <span class="ops-label">Train</span>
-        <span class="text-secondary small">Admin only</span>
-        <span id="status-ml" class="status-indicator status-idle ms-1 d-none">Idle</span>
+        <span class="ops-label">Training</span>
+        <a class="btn btn-sm btn-outline-success" href="/labels">Labeling</a>
     </div>
     <div class="ops-divider d-none d-md-block"></div>
     {% endif %}

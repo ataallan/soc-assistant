@@ -88,7 +88,7 @@ On a tiny, synthetic-looking sample set, high accuracy is **not** evidence the m
 - ML prediction + confidence are **always stored** for analytics (`ml_prediction`, `ml_confidence`, `severity_source`, `ml_assist`).
 - UI shows **ML assist** with confidence %, or **Low confidence — not used** below threshold — never a bold wrong primary label.
 - Auto-containment still requires the agreement gate; ML alone never contains.
-- Grow live labels via the **Labeling** page, then retrain; only then consider turning `ML_ASSIST_ONLY=false` for cautious hybrid override.
+- Lab builds can grow labels on the developer **Labeling** page, train a candidate, then activate it. Customer installs keep the shipped artifacts and assist-only defaults. Turning `ML_ASSIST_ONLY=false` is a separate, explicit choice.
 
 
 ---
