@@ -86,6 +86,15 @@
       {% endif %}
     </div>
 
+    {% if proposal %}
+    <div class="soc-panel mb-3">
+      <h4 class="mb-3" style="font-size:1.05rem;">Similar alerts</h4>
+      {% with proposal=proposal, next='/cases/' ~ case.id, origin='case' %}
+      {% include "_suppress_controls.html" %}
+      {% endwith %}
+    </div>
+    {% endif %}
+
     <div class="soc-panel mb-3">
       <h4 class="mb-3" style="font-size:1.05rem;">Notes</h4>
       {% if case.notes %}

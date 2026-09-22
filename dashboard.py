@@ -83,6 +83,17 @@ from triage_engine import (
     get_ml_assist_only,
     get_ml_confidence_threshold,
 )
+from detection.suppressions import (
+    attach_proposals,
+    create_mute,
+    create_permanent,
+    decorate_fp_rows,
+    dismiss_draft,
+    list_panel,
+    record_mark,
+    remove_mute,
+    remove_suppress,
+)
 
 # -------------------------------------------------
 # EMAIL (Flask-Mail)
@@ -1057,7 +1068,8 @@ def enrich_triage_rows(rows):
 @login_required
 def report():
     view, view_label = normalize_view(request.args.get("view"))
-    rows = enrich_triage_rows(list_triage_events(view=view))
+    rows = attach_proposals(enrich_triage_rows(list_triage_events(view=view)))
+    flash = session.pop("suppress_flash", None)
     return render_template(
         "report.html",
         rows=rows,
@@ -1065,6 +1077,7 @@ def report():
         view_label=view_label,
         ml_assist_only=get_ml_assist_only(),
         ml_threshold=get_ml_confidence_threshold(),
+        flash=flash,
     )
 
 
@@ -1429,8 +1442,9 @@ def fp_review_page():
     limit = max(100, min(limit, 2000))
 
     events = list_triage_events(view="total", limit=limit)
-    rows = aggregate_noisy_rules(events, limit_events=limit, top_n=50)
-    flash = session.pop("fp_flash", None)
+    rows = decorate_fp_rows(aggregate_noisy_rules(events, limit_events=limit, top_n=50))
+    panel = list_panel()
+    flash = session.pop("suppress_flash", None) or session.pop("fp_flash", None)
     return render_template(
         "fp_review.html",
         user=session.get("user"),
@@ -1439,6 +1453,8 @@ def fp_review_page():
         event_count=len(events),
         ml_assist_only=get_ml_assist_only(),
         flash=flash,
+        active_suppresses=panel.get("suppresses") or [],
+        active_mutes=panel.get("mutes") or [],
     )
 
 
@@ -1468,6 +1484,168 @@ def fp_review_enqueue():
         ok = True
     session["fp_flash"] = {"ok": ok, "message": msg}
     return redirect(f"/fp-review?limit={window}")
+
+
+def _suppress_next(default: str) -> str:
+    nxt = (request.form.get("next") or "").strip()
+    if not nxt.startswith("/") or nxt.startswith("//") or "\\" in nxt:
+        return default
+    parsed = urlparse(nxt)
+    if parsed.scheme or parsed.netloc:
+        return default
+    path = parsed.path or default
+    if parsed.query:
+        return f"{path}?{parsed.query}"
+    return path
+
+
+def _suppress_target() -> dict:
+    """Prefer the stored triage row over posted fields when an event id is present."""
+    posted = {
+        "rule_key": request.form.get("rule_key") or "",
+        "host": request.form.get("host") or "",
+        "user": request.form.get("user") or "",
+        "fingerprint": request.form.get("fingerprint") or "",
+        "ip": request.form.get("ip") or "",
+        "event_id": (request.form.get("event_id") or "").strip(),
+        "sample": request.form.get("sample") or "",
+        "note": request.form.get("note") or "",
+        "origin": request.form.get("origin") or "",
+    }
+    event_id = posted["event_id"]
+    if not event_id:
+        return posted
+    try:
+        event = get_triage_event(int(event_id))
+    except (TypeError, ValueError):
+        return posted
+    if not event:
+        return posted
+    from detection.suppressions import proposal_from_event
+
+    proposal = proposal_from_event(event)
+    posted.update(
+        {
+            "rule_key": proposal.get("rule_key") or "",
+            "host": proposal.get("host") or "",
+            "user": proposal.get("user") or "",
+            "fingerprint": proposal.get("fingerprint") or "",
+            "ip": proposal.get("ip") or "",
+            "sample": proposal.get("sample") or posted["sample"],
+            "event_id": str(event.get("id") or event_id),
+        }
+    )
+    return posted
+
+
+def _suppress_scope() -> str:
+    scope = (request.form.get("scope") or "bucket").strip().lower()
+    if request.form.get("entire_rule") in {"1", "true", "yes", "on"}:
+        return "rule"
+    return scope or "bucket"
+
+
+def _suppress_actor() -> str:
+    return (session.get("user") or "").strip()
+
+
+def _can_confirm_suppress() -> bool:
+    return current_role() == ROLE_ADMIN or is_developer_user()
+
+
+def _suppress_confirmed() -> bool:
+    raw = request.form.get("admin_confirm")
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _finish_suppress(result: dict, default: str):
+    message = result.get("message") or ("Saved." if result.get("ok") else "Could not save.")
+    if _wants_json():
+        status = 200 if result.get("ok") else 400
+        return jsonify({"ok": bool(result.get("ok")), "message": message, **result}), status
+    session["suppress_flash"] = {"ok": bool(result.get("ok")), "message": message}
+    return redirect(_suppress_next(default))
+
+
+@app.route("/fp/mark", methods=["POST"])
+@login_required
+def fp_mark():
+    target = _suppress_target()
+    result = record_mark(actor=_suppress_actor(), **{k: target[k] for k in ("rule_key", "host", "user", "fingerprint", "event_id", "sample")})
+    return _finish_suppress(result, "/report")
+
+
+@app.route("/fp/mute", methods=["POST"])
+@login_required
+def fp_mute():
+    target = _suppress_target()
+    hours = request.form.get("hours")
+    if str(hours or "").strip().lower() == "custom":
+        hours = request.form.get("custom_hours")
+    result = create_mute(
+        rule_key=target["rule_key"],
+        host=target["host"],
+        user=target["user"],
+        fingerprint=target["fingerprint"],
+        scope=_suppress_scope() if _suppress_scope() in {"bucket", "rule"} else "bucket",
+        hours=hours,
+        actor=_suppress_actor(),
+        event_id=target["event_id"],
+        sample=target["sample"],
+        origin=target["origin"],
+    )
+    return _finish_suppress(result, "/report")
+
+
+@app.route("/fp/unmute", methods=["POST"])
+@login_required
+def fp_unmute():
+    result = remove_mute(request.form.get("mute_id") or "", actor=_suppress_actor())
+    return _finish_suppress(result, "/fp-review")
+
+
+@app.route("/fp/suppress", methods=["POST"])
+@login_required
+def fp_suppress():
+    target = _suppress_target()
+    result = create_permanent(
+        rule_key=target["rule_key"],
+        host=target["host"],
+        user=target["user"],
+        fingerprint=target["fingerprint"],
+        ip=target["ip"],
+        scope=_suppress_scope(),
+        actor=_suppress_actor(),
+        can_confirm=_can_confirm_suppress(),
+        confirmed=_suppress_confirmed(),
+        event_id=target["event_id"],
+        note=target["note"],
+        sample=target["sample"],
+        origin=target["origin"],
+    )
+    return _finish_suppress(result, "/fp-review")
+
+
+@app.route("/fp/suppress/remove", methods=["POST"])
+@login_required
+def fp_suppress_remove():
+    result = remove_suppress(request.form.get("entry_id") or "", actor=_suppress_actor())
+    return _finish_suppress(result, "/fp-review")
+
+
+@app.route("/fp/dismiss", methods=["POST"])
+@login_required
+def fp_dismiss():
+    target = _suppress_target()
+    result = dismiss_draft(
+        rule_key=target["rule_key"],
+        host=target["host"],
+        user=target["user"],
+        fingerprint=target["fingerprint"],
+        actor=_suppress_actor(),
+        sample=target["sample"],
+    )
+    return _finish_suppress(result, "/fp-review")
 
 
 # -------------------------------------------------
@@ -1866,8 +2044,21 @@ def case_detail(case_id: int):
     if case is None:
         session["cases_flash"] = {"ok": False, "message": f"Case #{case_id} not found."}
         return redirect("/cases")
-    flash = session.pop("cases_flash", None)
+    flash = session.pop("suppress_flash", None) or session.pop("cases_flash", None)
     user = session.get("user")
+    linked = None
+    if case.get("triage_event_id"):
+        linked = get_triage_event(case["triage_event_id"])
+    source_event = dict(linked or {})
+    if not source_event.get("host"):
+        source_event["host"] = case.get("host")
+    if not source_event.get("user"):
+        source_event["user"] = case.get("user_entity")
+    if not source_event.get("ip"):
+        source_event["ip"] = case.get("ip")
+    if not source_event.get("log"):
+        source_event["log"] = case.get("summary") or case.get("title") or ""
+    proposal_rows = attach_proposals([source_event])
     return render_template(
         "case_detail.html",
         user=user,
@@ -1877,6 +2068,7 @@ def case_detail(case_id: int):
         ml_assist_only=get_ml_assist_only(),
         case_sync_mode=get_case_sync_mode(),
         case_sync_mode_label=get_case_sync_mode_label(),
+        proposal=(proposal_rows[0].get("proposal") if proposal_rows else None),
     )
 
 
