@@ -19,6 +19,18 @@ After approval, sign-in sends a one-time code through the existing mail path (Re
 
 Set `SOC_EMAIL_2FA=false` only for local debugging. Pending users still cannot open the console.
 
+### Password reset
+
+**Forgot password?** on the login page opens `/forgot-password`. The form accepts the account email. The page does not say whether that email exists.
+
+A reset link is issued only for an **approved and active** account. Pending, rejected, inactive, and unknown emails get the same on-page response and no usable token. The token is stored as a SHA-256 hash with an expiry (`SOC_RESET_TOKEN_MINUTES`, default 45). It is single-use.
+
+Mail uses the same path as login codes. If Resend or SMTP accepts the message, the page shows a generic line and does not claim the account exists. If mail is not configured, the page says delivery is not configured and does not claim an email was sent. If the provider is configured but delivery fails, the page says the email was not sent. The reset URL is written to the server log whenever it is issued for an eligible account. Set `SOC_AUTH_SHOW_RESET_URL=1` to also show that URL on the page when mail is not configured.
+
+`/reset-password?token=…` sets a new password (at least 8 characters, confirmation must match) and clears the token. Reset does not approve the account and does not skip the email login code. The next sign-in still follows those gates.
+
+Forgot-password posts are limited per account (`SOC_RESET_MIN_INTERVAL_SECONDS`, default 60) and per IP (`SOC_RESET_IP_LIMIT`, default 8 per 15 minutes) so the form cannot be used to spam mail.
+
 ### Wipe accounts and create a new first admin
 
 1. Stop the dashboard.

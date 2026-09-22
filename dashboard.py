@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, jsonify, redirect, session, send_file, g
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from werkzeug.security import generate_password_hash, check_password_hash
 import threading
 import pandas as pd
@@ -33,12 +33,17 @@ from rbac import (
     role_for_identity,
 )
 from accounts import (
+    RESET_MIN_INTERVAL_SECONDS_DEFAULT,
+    RESET_TOKEN_MINUTES_DEFAULT,
     AccountExists,
+    account_for_reset_token,
     account_is_active,
     apply_account_action,
     can_manage_accounts,
+    consume_reset_token,
     email_2fa_required,
     get_account,
+    issue_reset_token,
     list_accounts,
     register_account,
 )
@@ -175,8 +180,8 @@ def mail_configured() -> bool:
     return resend_configured() or bool(app.config['MAIL_USERNAME'] and app.config['MAIL_PASSWORD'])
 
 
-def _send_otp_resend(username: str, otp: str, subject: str) -> bool:
-    """Send OTP via Resend API (same provider as muncyber.com). Returns True on success."""
+def _send_resend_email(to: str, subject: str, text: str, html: str) -> bool:
+    """Send one message through Resend. Returns True when the provider accepts it."""
     import json
     import urllib.error
     import urllib.request
@@ -185,20 +190,11 @@ def _send_otp_resend(username: str, otp: str, subject: str) -> bool:
     if not api_key:
         return False
     from_addr = (os.environ.get("RESEND_FROM") or "Mun Cyber Technologies <info@muncyber.com>").strip()
-    body = (
-        f"Your AI-Powered SOC Assistant verification code is: {otp}\n\n"
-        f"It expires in 5 minutes. If you did not try to sign in, ignore this email."
-    )
-    html = (
-        f"<p>Your AI-Powered SOC Assistant verification code is:</p>"
-        f"<p style=\"font-size:24px;font-weight:700;letter-spacing:4px\">{otp}</p>"
-        f"<p>It expires in 5 minutes. If you did not try to sign in, ignore this email.</p>"
-    )
     payload = json.dumps({
         "from": from_addr,
-        "to": [username],
+        "to": [to],
         "subject": subject,
-        "text": body,
+        "text": text,
         "html": html,
     }).encode("utf-8")
     req = urllib.request.Request(
@@ -215,17 +211,33 @@ def _send_otp_resend(username: str, otp: str, subject: str) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             if 200 <= resp.status < 300:
-                print(f"OTP emailed via Resend to {username}")
                 return True
-            print(f"Resend OTP unexpected status {resp.status}")
+            print(f"Resend unexpected status {resp.status}")
             return False
     except urllib.error.HTTPError as err:
         detail = err.read().decode("utf-8", errors="replace")[:300]
-        print(f"Resend OTP failed: {err.code} {detail}")
+        print(f"Resend failed: {err.code} {detail}")
         return False
     except Exception as err:
-        print(f"Resend OTP error: {err}")
+        print(f"Resend error: {err}")
         return False
+
+
+def _send_otp_resend(username: str, otp: str, subject: str) -> bool:
+    """Send OTP via Resend API (same provider as muncyber.com). Returns True on success."""
+    body = (
+        f"Your AI-Powered SOC Assistant verification code is: {otp}\n\n"
+        f"It expires in 5 minutes. If you did not try to sign in, ignore this email."
+    )
+    html = (
+        f"<p>Your AI-Powered SOC Assistant verification code is:</p>"
+        f"<p style=\"font-size:24px;font-weight:700;letter-spacing:4px\">{otp}</p>"
+        f"<p>It expires in 5 minutes. If you did not try to sign in, ignore this email.</p>"
+    )
+    if not _send_resend_email(username, subject, body, html):
+        return False
+    print(f"OTP emailed via Resend to {username}")
+    return True
 
 
 def deliver_otp(username: str, otp: str, subject: str = "Your Verification Code") -> bool:
@@ -255,6 +267,53 @@ def deliver_otp(username: str, otp: str, subject: str = "Your Verification Code"
     # Local fallback: log to server console only — never show on the website
     print(f"[OTP not emailed] user={username} code={otp} (set RESEND_API_KEY or MAIL_* in .env)")
     return False
+
+
+def deliver_reset_email(username: str, reset_url: str, minutes: int) -> str:
+    """Email a password reset link using the same Resend then SMTP path as OTP.
+
+    Returns ``sent``, ``failed``, or ``unconfigured``. Never reports ``sent``
+    when delivery did not succeed.
+    """
+    subject = "Reset your AI-Powered SOC Assistant password"
+    text = (
+        "AI-Powered SOC Assistant password reset\n\n"
+        "A password reset was requested for your account. "
+        f"This link expires in {minutes} minutes:\n\n{reset_url}\n\n"
+        "If you did not request this, you can ignore this email.\n"
+    )
+    html = (
+        "<p>A password reset was requested for your AI-Powered SOC Assistant account. "
+        f"This link expires in {minutes} minutes.</p>"
+        f'<p><a href="{reset_url}">Choose a new password</a></p>'
+        "<p>If you did not request this, you can ignore this email.</p>"
+    )
+    if not mail_configured():
+        print(
+            f"[password reset not emailed] user={username} "
+            "(set RESEND_API_KEY or MAIL_* in .env)"
+        )
+        return "unconfigured"
+    if resend_configured():
+        if _send_resend_email(username, subject, text, html):
+            print(f"Password reset emailed via Resend to {username}")
+            return "sent"
+        print("Resend failed; trying SMTP fallback if configured")
+    if app.config["MAIL_USERNAME"] and app.config["MAIL_PASSWORD"]:
+        try:
+            msg = Message(
+                subject,
+                sender=app.config["MAIL_USERNAME"],
+                recipients=[username],
+            )
+            msg.body = text
+            mail.send(msg)
+            print(f"Password reset emailed via SMTP to {username}")
+            return "sent"
+        except Exception as err:
+            print(f"SMTP password reset failed: {err}")
+    print(f"[password reset not emailed] user={username} (delivery failed)")
+    return "failed"
 
 # -------------------------------------------------
 # SQLITE STORAGE (source of truth)
@@ -286,7 +345,27 @@ _AUTH_SESSION_KEYS = (
     "account_limited",
 )
 
-_AUTH_PUBLIC_PATHS = {"/login", "/register", "/logout", "/2fa", "/2fa/resend", "/pending"}
+_AUTH_PUBLIC_PATHS = {
+    "/login",
+    "/register",
+    "/logout",
+    "/2fa",
+    "/2fa/resend",
+    "/pending",
+    "/forgot-password",
+    "/reset-password",
+}
+
+_RESET_NEUTRAL = (
+    "If an account exists for that email, password reset instructions will arrive shortly."
+)
+_RESET_UNCONFIGURED = "Email delivery is not configured. A reset email was not sent."
+_RESET_FAILED = "Email delivery failed. A reset email was not sent."
+_RESET_INVALID = "Reset link is invalid or has expired."
+_RESET_UPDATED = "Password updated. Sign in with your new password."
+_RESET_IP_LIMIT = "Please wait a few minutes before requesting another reset link."
+_reset_ip_hits: dict = {}
+_reset_ip_lock = threading.Lock()
 
 
 def _clear_auth_session() -> None:
@@ -566,9 +645,60 @@ def register():
     return render_template("register.html")
 
 
+def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
+    try:
+        value = int(os.environ.get(name) or default)
+    except (TypeError, ValueError):
+        return default
+    if value < minimum:
+        return default
+    return value
+
+
+def _show_reset_url_on_page() -> bool:
+    raw = os.environ.get("SOC_AUTH_SHOW_RESET_URL")
+    if raw is None or str(raw).strip() == "":
+        return False
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _reset_link(token: str) -> str:
+    public = (os.environ.get("SOC_PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    path = "/reset-password?token=" + quote(token, safe="")
+    if public:
+        return public + path
+    return request.host_url.rstrip("/") + path
+
+
+def _reset_ip_blocked() -> bool:
+    """Throttle forgot-password posts per client IP. Same response for every identity."""
+    limit = _env_int("SOC_RESET_IP_LIMIT", 8, minimum=1)
+    window = _env_int("SOC_RESET_IP_WINDOW_SECONDS", 900, minimum=1)
+    ip = (request.remote_addr or "unknown").strip() or "unknown"
+    now = time.time()
+    with _reset_ip_lock:
+        hits = [stamp for stamp in _reset_ip_hits.get(ip, []) if now - stamp < window]
+        if len(hits) >= limit:
+            _reset_ip_hits[ip] = hits
+            return True
+        hits.append(now)
+        _reset_ip_hits[ip] = hits
+        return False
+
+
+def _render_forgot(*, error: str = "", message: str = "", demo_reset_url: str = ""):
+    return render_template(
+        "forgot_password.html",
+        error=error or None,
+        message=message or None,
+        demo_reset_url=demo_reset_url or None,
+    )
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     registered = request.args.get("registered") if request.method == "GET" else None
+    notice = session.pop("reset_message", None) if request.method == "GET" else None
     if request.method == "POST":
         username = (request.form.get("username") or "").strip()
         password = request.form.get("password") or ""
@@ -591,7 +721,89 @@ def login():
         _establish_session(account["username"], email_2fa_ok=False)
         return redirect("/")
 
-    return render_template("login.html", registered=registered)
+    return render_template("login.html", registered=registered, message=notice)
+
+
+@app.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if request.method == "GET":
+        return _render_forgot(error=session.pop("reset_error", None) or "")
+
+    if _reset_ip_blocked():
+        return _render_forgot(error=_RESET_IP_LIMIT)
+
+    username = (request.form.get("username") or "").strip()
+    minutes = _env_int("SOC_RESET_TOKEN_MINUTES", RESET_TOKEN_MINUTES_DEFAULT, minimum=1)
+    interval = _env_int(
+        "SOC_RESET_MIN_INTERVAL_SECONDS",
+        RESET_MIN_INTERVAL_SECONDS_DEFAULT,
+        minimum=0,
+    )
+    status, token = issue_reset_token(
+        username,
+        ttl_minutes=minutes,
+        min_interval_seconds=interval,
+    )
+    demo_reset_url = ""
+    if status == "issued" and token:
+        reset_url = _reset_link(token)
+        app.logger.info("Password reset URL for %s: %s", username.strip().lower(), reset_url)
+        print(f"[password reset] user={username.strip().lower()} url={reset_url}")
+        delivery = deliver_reset_email(username.strip().lower(), reset_url, minutes)
+        if delivery == "sent":
+            return _render_forgot(message=_RESET_NEUTRAL)
+        if delivery == "failed":
+            return _render_forgot(error=_RESET_FAILED)
+        if _show_reset_url_on_page():
+            demo_reset_url = reset_url
+        return _render_forgot(
+            error=_RESET_UNCONFIGURED,
+            message="A one-time reset link is shown below." if demo_reset_url else "",
+            demo_reset_url=demo_reset_url,
+        )
+
+    if mail_configured():
+        return _render_forgot(message=_RESET_NEUTRAL)
+    return _render_forgot(error=_RESET_UNCONFIGURED)
+
+
+@app.route("/reset-password", methods=["GET", "POST"])
+def reset_password():
+    token = (request.values.get("token") or "").strip()
+    account = account_for_reset_token(token) if token else None
+    if not account:
+        session["reset_error"] = _RESET_INVALID
+        return redirect("/forgot-password")
+
+    if request.method == "POST":
+        password = request.form.get("password") or ""
+        confirm = request.form.get("confirm_password") or ""
+        if len(password) < 8:
+            return render_template(
+                "reset_password.html",
+                token=token,
+                username=account["username"],
+                error="Password must be at least 8 characters.",
+            )
+        if password != confirm:
+            return render_template(
+                "reset_password.html",
+                token=token,
+                username=account["username"],
+                error="Passwords do not match.",
+            )
+        updated = consume_reset_token(token, generate_password_hash(password))
+        if not updated:
+            session["reset_error"] = _RESET_INVALID
+            return redirect("/forgot-password")
+        session["reset_message"] = _RESET_UPDATED
+        return redirect("/login")
+
+    return render_template(
+        "reset_password.html",
+        token=token,
+        username=account["username"],
+    )
 
 
 @app.route("/2fa", methods=["GET", "POST"])

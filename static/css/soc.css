@@ -850,6 +850,10 @@ a:hover {
 .password-field .pw-toggle:focus {
   color: var(--soc-text);
 }
+.auth-reset-url {
+  word-break: break-all;
+  font-size: 0.82rem;
+}
 .autofill-trap {
   position: absolute;
   left: -9999px;

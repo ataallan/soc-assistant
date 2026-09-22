@@ -11,8 +11,11 @@ Email login codes are controlled separately by ``SOC_EMAIL_2FA`` (default on).
 from __future__ import annotations
 
 import csv
+import hashlib
 import os
+import secrets
 import threading
+import time
 from typing import Dict, List, Optional, Tuple
 
 from rbac import ROLE_ADMIN, role_for_identity
@@ -23,7 +26,20 @@ STATUS_REJECTED = "rejected"
 STATUS_INACTIVE = "inactive"
 
 _APPROVER_ROLES = {ROLE_ADMIN, "developer"}
-_COLUMNS = ["username", "password_hash", "role", "approved", "status", "two_factor"]
+_COLUMNS = [
+    "username",
+    "password_hash",
+    "role",
+    "approved",
+    "status",
+    "two_factor",
+    "reset_token_hash",
+    "reset_expires",
+    "reset_issued_at",
+]
+
+RESET_TOKEN_MINUTES_DEFAULT = 45
+RESET_MIN_INTERVAL_SECONDS_DEFAULT = 60
 
 _lock = threading.Lock()
 
@@ -146,6 +162,9 @@ def _load_unlocked() -> Dict[str, dict]:
             "approved": approved,
             "status": status,
             "two_factor": two_factor,
+            "reset_token_hash": (row.get("reset_token_hash") or "").strip(),
+            "reset_expires": (row.get("reset_expires") or "").strip(),
+            "reset_issued_at": (row.get("reset_issued_at") or "").strip(),
         }
 
     if legacy:
@@ -185,6 +204,9 @@ def _save_unlocked(accounts: Dict[str, dict]) -> None:
                     "approved": "true" if account.get("approved") else "false",
                     "status": account.get("status") or STATUS_PENDING,
                     "two_factor": "true" if account.get("two_factor", True) else "false",
+                    "reset_token_hash": account.get("reset_token_hash") or "",
+                    "reset_expires": account.get("reset_expires") or "",
+                    "reset_issued_at": account.get("reset_issued_at") or "",
                 }
             )
 
@@ -240,6 +262,9 @@ def register_account(username: str, password_hash: str) -> dict:
             "approved": True if first else False,
             "status": STATUS_ACTIVE if first else STATUS_PENDING,
             "two_factor": True,
+            "reset_token_hash": "",
+            "reset_expires": "",
+            "reset_issued_at": "",
         }
         accounts[email] = record
         _save_unlocked(accounts)
@@ -294,12 +319,141 @@ def apply_account_action(actor: str, action: str, target: str) -> Tuple[bool, st
         elif action == "reject":
             account["approved"] = False
             account["status"] = STATUS_REJECTED
+            _clear_reset_fields(account)
             message = f"Rejected {target_key}."
         else:
             account["approved"] = False
             account["status"] = STATUS_INACTIVE
+            _clear_reset_fields(account)
             message = f"Deactivated {target_key}."
 
         accounts[target_key] = account
         _save_unlocked(accounts)
         return True, message
+
+
+def _clear_reset_token(account: dict) -> None:
+    account["reset_token_hash"] = ""
+    account["reset_expires"] = ""
+
+
+def _clear_reset_fields(account: dict) -> None:
+    _clear_reset_token(account)
+    account["reset_issued_at"] = ""
+
+
+def _reset_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _reset_expiry(account: dict) -> float:
+    try:
+        return float(account.get("reset_expires") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _reset_issued_at(account: dict) -> float:
+    try:
+        return float(account.get("reset_issued_at") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _find_reset_account(accounts: Dict[str, dict], token: str) -> Optional[dict]:
+    token = (token or "").strip()
+    if not token:
+        return None
+    digest = _reset_token_hash(token)
+    for account in accounts.values():
+        stored = (account.get("reset_token_hash") or "").strip()
+        if len(stored) != len(digest):
+            continue
+        if secrets.compare_digest(stored, digest):
+            return account
+    return None
+
+
+def _reset_token_usable(account: Optional[dict], now: Optional[float] = None) -> bool:
+    if not account or not account_is_active(account):
+        return False
+    moment = time.time() if now is None else now
+    return _reset_expiry(account) >= moment
+
+
+def issue_reset_token(
+    username: str,
+    *,
+    ttl_minutes: int = RESET_TOKEN_MINUTES_DEFAULT,
+    min_interval_seconds: int = RESET_MIN_INTERVAL_SECONDS_DEFAULT,
+) -> Tuple[str, Optional[str]]:
+    """Issue a one-time reset token for an approved, active account.
+
+    Returns ``(status, token)``. ``status`` is ``issued``, ``throttled``, or
+    ``ineligible``. The raw token is returned only for ``issued``; the account
+    file stores its SHA-256 hash and expiry. Pending, rejected, inactive, and
+    unknown identities are ``ineligible`` and do not get a token.
+    """
+    email = _key(username)
+    if not email:
+        return "ineligible", None
+    try:
+        ttl = int(ttl_minutes)
+    except (TypeError, ValueError):
+        ttl = RESET_TOKEN_MINUTES_DEFAULT
+    if ttl <= 0:
+        ttl = RESET_TOKEN_MINUTES_DEFAULT
+    try:
+        interval = int(min_interval_seconds)
+    except (TypeError, ValueError):
+        interval = RESET_MIN_INTERVAL_SECONDS_DEFAULT
+    if interval < 0:
+        interval = 0
+
+    with _lock:
+        accounts = _load_unlocked()
+        account = accounts.get(email)
+        if not account or not account_is_active(account):
+            return "ineligible", None
+        issued_at = _reset_issued_at(account)
+        if interval and issued_at and (time.time() - issued_at) < interval:
+            return "throttled", None
+        token = secrets.token_urlsafe(32)
+        now = int(time.time())
+        account["reset_token_hash"] = _reset_token_hash(token)
+        account["reset_expires"] = str(now + ttl * 60)
+        account["reset_issued_at"] = str(now)
+        accounts[email] = account
+        _save_unlocked(accounts)
+        return "issued", token
+
+
+def account_for_reset_token(token: str) -> Optional[dict]:
+    """Return the approved active account for a live reset token, if any."""
+    with _lock:
+        account = _find_reset_account(_load_unlocked(), token)
+        if not _reset_token_usable(account):
+            return None
+        return dict(account)
+
+
+def consume_reset_token(token: str, password_hash: str) -> Optional[dict]:
+    """Set a new password hash and clear the reset token.
+
+    ``password_hash`` must already be a password hash. Returns the updated
+    account, or ``None`` when the token is missing, expired, or the account
+    is not approved and active. Does not change approval, status, or 2FA.
+    """
+    if not password_hash or not str(password_hash).strip():
+        return None
+    with _lock:
+        accounts = _load_unlocked()
+        account = _find_reset_account(accounts, token)
+        if not _reset_token_usable(account):
+            return None
+        assert account is not None
+        account["password_hash"] = str(password_hash)
+        _clear_reset_token(account)
+        accounts[account["username"]] = account
+        _save_unlocked(accounts)
+        return dict(account)
