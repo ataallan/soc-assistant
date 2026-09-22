@@ -24,25 +24,99 @@
 </div>
 {% endif %}
 
+<div class="soc-panel mb-3">
+  <h4 class="mb-3" style="font-size:1.05rem;">Active suppresses</h4>
+  {% if active_suppresses or active_mutes %}
+  <div class="table-scroll">
+    <table class="table table-bordered table-striped mb-0 align-middle">
+      <thead>
+        <tr>
+          <th>Kind</th>
+          <th>Scope</th>
+          <th>Bucket / value</th>
+          <th>Who</th>
+          <th>When</th>
+          <th>Until</th>
+          <th style="width:7rem;"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in active_suppresses %}
+        <tr>
+          <td>Suppress</td>
+          <td>{{ row.scope_label }}</td>
+          <td><code class="bucket-key">{{ row.detail }}</code></td>
+          <td class="small">{{ row.who or '—' }}</td>
+          <td class="small">{{ row.when or '—' }}</td>
+          <td class="small text-secondary">—</td>
+          <td>
+            {% if row.removable %}
+            <form method="POST" action="/fp/suppress/remove">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="entry_id" value="{{ row.id }}">
+              <input type="hidden" name="next" value="{{ request.full_path }}">
+              <button type="submit" class="btn btn-sm btn-outline-secondary">Remove</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        {% for row in active_mutes %}
+        <tr>
+          <td>Mute</td>
+          <td>{{ row.scope_label }}</td>
+          <td><code class="bucket-key">{{ row.detail }}</code></td>
+          <td class="small">{{ row.who or '—' }}</td>
+          <td class="small">{{ row.when or '—' }}</td>
+          <td class="small">{{ row.expires_label }}</td>
+          <td>
+            <form method="POST" action="/fp/unmute">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="mute_id" value="{{ row.id }}">
+              <input type="hidden" name="next" value="{{ request.full_path }}">
+              <button type="submit" class="btn btn-sm btn-outline-warning">Unmute</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-secondary mb-0">No active suppresses.</p>
+  {% endif %}
+</div>
+
 <div class="soc-panel">
-  <h4 class="mb-3" style="font-size:1.05rem;">Noisy rules (by volume)</h4>
+  <h4 class="mb-3" style="font-size:1.05rem;">Noisy buckets</h4>
   {% if rows %}
   <div class="table-scroll">
     <table class="table table-bordered table-striped mb-0 align-middle">
       <thead>
         <tr>
-          <th style="width:12rem;">Rule key</th>
-          <th style="width:6rem;">Count</th>
-          <th style="width:8rem;">Low / ignore</th>
-          <th style="width:6rem;">% low</th>
-          <th>Sample log</th>
+          <th style="width:16rem;">Bucket</th>
+          <th style="width:5rem;">Count</th>
+          <th style="width:7rem;">Low / ignore</th>
+          <th style="width:5rem;">% low</th>
+          <th>Sample</th>
+          <th style="width:16rem;"></th>
           {% if is_developer %}<th style="width:7rem;"></th>{% endif %}
         </tr>
       </thead>
       <tbody>
         {% for row in rows %}
         <tr>
-          <td><code>{{ row.rule_key }}</code></td>
+          <td>
+            <code class="bucket-key">{{ row.bucket_key }}</code>
+            {% if row.host or row.user %}
+            <div class="small text-secondary mt-1">
+              {% if row.host %}Host {{ row.host }}{% endif %}{% if row.host and row.user %} · {% endif %}{% if row.user %}User {{ row.user }}{% endif %}
+            </div>
+            {% endif %}
+            {% if row.summary %}
+            <div class="small mt-1">Suggested: {{ row.summary }}</div>
+            {% endif %}
+          </td>
           <td class="fw-semibold">{{ row.count }}</td>
           <td>{{ row.low_ignore_count }}</td>
           <td>
@@ -54,8 +128,99 @@
             <span class="badge text-bg-secondary">{{ row.pct_low_ignore }}%</span>
             {% endif %}
           </td>
-          <td style="max-width:520px;white-space:normal;" class="small text-secondary">
+          <td style="max-width:420px;white-space:normal;" class="small text-secondary">
             {{ row.sample_log or '—' }}
+          </td>
+          <td>
+            {% if row.covered_label %}
+            <div class="small fw-semibold">{{ row.covered_label }}</div>
+            {% elif row.dismissed %}
+            <div class="small text-secondary">Dismissed</div>
+            {% elif row.draft %}
+            <div class="small text-secondary mb-1">{{ row.mark_count }} / {{ row.gate }} marks</div>
+            {% if row.needs_confirmation and not (is_admin or is_developer) %}
+            <div class="small mb-1">Needs confirmation</div>
+            {% endif %}
+            <div class="d-flex flex-wrap gap-1 mb-1">
+              <form method="POST" action="/fp/suppress">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="next" value="{{ request.full_path }}">
+                <input type="hidden" name="origin" value="fp-review">
+                <input type="hidden" name="scope" value="bucket">
+                <input type="hidden" name="event_id" value="{{ row.event_id }}">
+                <input type="hidden" name="rule_key" value="{{ row.rule_key }}">
+                <input type="hidden" name="host" value="{{ row.host }}">
+                <input type="hidden" name="user" value="{{ row.user }}">
+                <input type="hidden" name="fingerprint" value="{{ row.fingerprint }}">
+                <input type="hidden" name="ip" value="{{ row.ip }}">
+                <input type="hidden" name="sample" value="{{ row.sample }}">
+                {% if row.needs_confirmation and (is_admin or is_developer) %}
+                <label class="small d-block mb-1">
+                  <input type="checkbox" name="admin_confirm" value="yes" required> Confirm permanent suppress
+                </label>
+                {% endif %}
+                <button type="submit" class="btn btn-sm btn-primary" {% if row.needs_confirmation and not (is_admin or is_developer) %}disabled{% endif %}>Accept</button>
+              </form>
+              <form method="POST" action="/fp/dismiss">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="next" value="{{ request.full_path }}">
+                <input type="hidden" name="rule_key" value="{{ row.rule_key }}">
+                <input type="hidden" name="host" value="{{ row.host }}">
+                <input type="hidden" name="user" value="{{ row.user }}">
+                <input type="hidden" name="fingerprint" value="{{ row.fingerprint }}">
+                <input type="hidden" name="sample" value="{{ row.sample }}">
+                <button type="submit" class="btn btn-sm btn-outline-secondary">Dismiss</button>
+              </form>
+            </div>
+            <details class="suppress-details mb-1">
+              <summary class="btn btn-sm btn-outline-secondary">Edit</summary>
+              <form method="POST" action="/fp/suppress" class="mt-2">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="next" value="{{ request.full_path }}">
+                <input type="hidden" name="origin" value="fp-review">
+                <input type="hidden" name="event_id" value="{{ row.event_id }}">
+                <input type="hidden" name="rule_key" value="{{ row.rule_key }}">
+                <input type="hidden" name="host" value="{{ row.host }}">
+                <input type="hidden" name="user" value="{{ row.user }}">
+                <input type="hidden" name="fingerprint" value="{{ row.fingerprint }}">
+                <input type="hidden" name="ip" value="{{ row.ip }}">
+                <input type="hidden" name="sample" value="{{ row.sample }}">
+                <select name="scope" class="form-select form-select-sm mb-1" aria-label="Suppress scope">
+                  {% for opt in row.scope_options %}
+                  <option value="{{ opt.value }}">{{ opt.label }}</option>
+                  {% endfor %}
+                </select>
+                {% if row.needs_confirmation and (is_admin or is_developer) %}
+                <label class="small d-block mb-1">
+                  <input type="checkbox" name="admin_confirm" value="yes" required> Confirm permanent suppress
+                </label>
+                {% endif %}
+                <button type="submit" class="btn btn-sm btn-outline-primary" {% if row.needs_confirmation and not (is_admin or is_developer) %}disabled{% endif %}>Suppress</button>
+              </form>
+            </details>
+            <form method="POST" action="/fp/mute">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="next" value="{{ request.full_path }}">
+              <input type="hidden" name="origin" value="fp-review">
+              <input type="hidden" name="event_id" value="{{ row.event_id }}">
+              <input type="hidden" name="rule_key" value="{{ row.rule_key }}">
+              <input type="hidden" name="host" value="{{ row.host }}">
+              <input type="hidden" name="user" value="{{ row.user }}">
+              <input type="hidden" name="fingerprint" value="{{ row.fingerprint }}">
+              <input type="hidden" name="sample" value="{{ row.sample }}">
+              {% if row.entire_rule_ok %}
+              <label class="small d-block mb-1">
+                <input type="checkbox" name="entire_rule" value="1"> All hosts for this rule
+              </label>
+              {% endif %}
+              <div class="d-flex flex-wrap gap-1 align-items-center">
+                <button type="submit" name="hours" value="24" class="btn btn-sm btn-outline-warning">Mute 24h</button>
+                <button type="submit" name="hours" value="168" class="btn btn-sm btn-outline-warning">Mute 7d</button>
+                <input type="number" name="custom_hours" min="1" max="720" class="form-control form-control-sm" style="width:5rem;" placeholder="Hours" aria-label="Mute hours">
+                <button type="submit" name="hours" value="custom" class="btn btn-sm btn-outline-warning">Mute</button>
+              </div>
+            </form>
+            {% endif %}
           </td>
           {% if is_developer %}
           <td>

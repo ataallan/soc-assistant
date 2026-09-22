@@ -1,4 +1,4 @@
-"""Detection pipeline: normalize → enrich → allowlist → YAML rules → triage_engine compose."""
+"""Detection pipeline: normalize → enrich → allowlist → YAML rules → scoped suppress/mute → triage compose."""
 
 from __future__ import annotations
 
@@ -36,11 +36,10 @@ def process_alert(
     alert = normalize_alert(raw, tenant_id=tenant_id)
     enrichment, notes = enrich_alert(alert)
 
-    # Allowlist / Wazuh rule-id suppress (after normalize+enrich; before escalation)
+    # Allowlist / Wazuh rule-id suppress (after normalize+enrich; before escalation).
+    # An explicit allowlist_path keeps unit tests off the operator runtime file.
     al_match = allowlist_match(alert, path=allowlist_path)
-    allowlisted = bool(al_match.get("matched"))
-    if allowlisted:
-        notes.append(explain_note(al_match))
+    classic_allowlisted = bool(al_match.get("matched"))
 
     yaml_result = evaluate_rules(
         alert,
@@ -49,6 +48,31 @@ def process_alert(
     )
     matched_rules: List[Dict[str, Any]] = yaml_result.get("matched_rules") or []
     yaml_sev = yaml_result.get("recommended_severity")
+    top_rule_early = matched_rules[0].get("id") if matched_rules else None
+
+    scoped: Dict[str, Any] = {"matched": False, "reasons": [], "kind": None, "expires_at": None, "bucket": {}}
+    if allowlist_path is None:
+        try:
+            from detection.suppressions import match_scoped
+
+            scoped = match_scoped(alert, matched_rule_id=top_rule_early)
+        except Exception:
+            notes.append("Suppress check unavailable.")
+
+    muted = bool(scoped.get("matched")) and scoped.get("kind") == "mute" and not classic_allowlisted
+    allowlisted = classic_allowlisted or (
+        bool(scoped.get("matched")) and scoped.get("kind") != "mute"
+    )
+    suppressed = classic_allowlisted or bool(scoped.get("matched"))
+    if classic_allowlisted:
+        notes.append(explain_note(al_match))
+    if scoped.get("matched"):
+        try:
+            from detection.suppressions import explain_scoped
+
+            notes.append(explain_scoped(scoped))
+        except Exception:
+            notes.append("Suppress matched — severity forced low; recommendation ignore.")
 
     # Compose with existing keyword + ML triage (assist-only preserved inside)
     triage: Dict[str, Any] = {}
@@ -95,7 +119,7 @@ def process_alert(
     if yaml_sev:
         candidates.append(yaml_sev)
 
-    if allowlisted:
+    if suppressed:
         combined_rule_sev = "low"
     else:
         combined_rule_sev = max_severity(candidates)
@@ -111,11 +135,11 @@ def process_alert(
             resolve_display_severity,
         )
 
-        if allowlisted:
-            # Keep ML assist display fields, but never let ML raise severity for allowlisted noise
+        if suppressed:
+            # Keep ML assist display fields, but never let ML raise severity for suppressed noise.
             resolved = {
                 "severity": "low",
-                "severity_source": "allowlist",
+                "severity_source": "mute" if muted else "allowlist",
                 "ml_assist": True,
                 "ml_used_for_display": False,
                 "low_confidence": True,
@@ -142,8 +166,8 @@ def process_alert(
             )
     except Exception:
         resolved = {
-            "severity": "low" if allowlisted else combined_rule_sev,
-            "severity_source": "allowlist" if allowlisted else "rules",
+            "severity": "low" if suppressed else combined_rule_sev,
+            "severity_source": ("mute" if muted else "allowlist") if suppressed else "rules",
             "ml_assist": True,
             "ml_used_for_display": False,
             "low_confidence": True,
@@ -157,7 +181,7 @@ def process_alert(
             "ml_severity": None,
         }
 
-    recommendation = "ignore" if allowlisted else _recommendation_for(combined_rule_sev)
+    recommendation = "ignore" if suppressed else _recommendation_for(combined_rule_sev)
 
     # Prefer extracted fields from normalize; fall back to triage NLP
     ip = alert.get("src_ip") or triage.get("ip")
@@ -168,9 +192,20 @@ def process_alert(
     if matched_rules:
         top_rule_id = matched_rules[0].get("id")
         top_explain = matched_rules[0].get("explain")
-    if allowlisted:
-        al_note = explain_note(al_match)
-        top_explain = f"{al_note}" + (f" | {top_explain}" if top_explain else "")
+    if suppressed:
+        note_parts = []
+        if classic_allowlisted:
+            note_parts.append(explain_note(al_match))
+        if scoped.get("matched"):
+            try:
+                from detection.suppressions import explain_scoped
+
+                note_parts.append(explain_scoped(scoped))
+            except Exception:
+                note_parts.append("Suppress matched — severity forced low; recommendation ignore.")
+        if note_parts:
+            prefix = " ".join(note_parts)
+            top_explain = prefix + (f" | {top_explain}" if top_explain else "")
 
     result = {
         "log": alert.get("raw_message") or triage.get("log") or "",
@@ -180,7 +215,7 @@ def process_alert(
         "file_hash": alert.get("file_hash"),
         "domain": alert.get("domain"),
         "cve": alert.get("cve"),
-        "severity": "low" if allowlisted else resolved["severity"],
+        "severity": "low" if suppressed else resolved["severity"],
         "recommendation": recommendation,
         "rule_based": recommendation,
         "rule_severity": combined_rule_sev,
@@ -189,7 +224,7 @@ def process_alert(
         "ml_severity": ml_sev,
         "ml_prediction": ml_sev,
         "ml_confidence": ml_conf,
-        "severity_source": resolved.get("severity_source") or ("allowlist" if allowlisted else "rules"),
+        "severity_source": resolved.get("severity_source") or (("mute" if muted else "allowlist") if suppressed else "rules"),
         "ml_assist": resolved.get("ml_assist", True),
         "ml_display_label": ml_display.get("label"),
         "ml_used_for_display": resolved.get("ml_used_for_display", False),
@@ -200,7 +235,9 @@ def process_alert(
         "enrichment": enrichment,
         "enrichment_notes": notes,
         "allowlisted": allowlisted,
-        "allowlist_reasons": list(al_match.get("reasons") or []),
+        "muted": bool(scoped.get("matched")) and scoped.get("kind") == "mute",
+        "allowlist_reasons": list(al_match.get("reasons") or []) + list(scoped.get("reasons") or []),
+        "suppress_bucket": (scoped.get("bucket") or None),
         "alert": alert,
         "tenant_id": alert.get("tenant_id") or tenant_id,
         "source": alert.get("source"),

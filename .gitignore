@@ -58,6 +58,9 @@ data/triage_export.csv
 # SQLite backups
 data/backups/
 
+# Operator suppresses and mutes (merged at runtime; git defaults stay in config/)
+data/allowlists_runtime.yml
+
 # Windows standalone installer output (machine-specific or rebuilt locally)
 install.log
 *.lnk

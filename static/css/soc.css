@@ -977,3 +977,27 @@ tr.label-focus {
 .soc-footer-social { display: flex; gap: 0.65rem; margin-top: 0.25rem; }
 .soc-footer-social .social-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); color: #c5d0dc; font-size: 0.72rem; font-weight: 700; text-decoration: none; }
 .soc-footer-social .social-btn:hover { color: #fff; border-color: rgba(69,199,255,0.45); background: rgba(69,199,255,0.08); }
+
+.suppress-box {
+  background: var(--soc-panel-2);
+  border: 1px solid var(--soc-border);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.suppress-box code,
+.bucket-key {
+  color: var(--soc-text);
+  word-break: break-all;
+  font-size: 0.78rem;
+}
+
+details.suppress-details > summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-block;
+}
+
+details.suppress-details > summary::-webkit-details-marker {
+  display: none;
+}

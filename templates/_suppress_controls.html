@@ -1,0 +1,94 @@
+<div class="suppress-box">
+  <div class="small text-secondary mb-1">Bucket</div>
+  <div class="mb-1"><code class="bucket-key">{{ proposal.bucket_key }}</code></div>
+  {% if proposal.host or proposal.user %}
+  <div class="small text-secondary mb-1">
+    {% if proposal.host %}Host {{ proposal.host }}{% endif %}{% if proposal.host and proposal.user %} · {% endif %}{% if proposal.user %}User {{ proposal.user }}{% endif %}
+  </div>
+  {% endif %}
+  <div class="small mb-1">Suggested: {{ proposal.summary }}</div>
+  {% if proposal.sample %}
+  <div class="small text-secondary mb-2">{{ proposal.sample }}</div>
+  {% endif %}
+
+  {% if proposal.covered_label %}
+  <div class="small fw-semibold mb-2">{{ proposal.covered_label }}</div>
+  {% if proposal.mute_id %}
+  <form method="POST" action="/fp/unmute" class="d-inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="mute_id" value="{{ proposal.mute_id }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <button type="submit" class="btn btn-sm btn-outline-warning">Unmute</button>
+  </form>
+  {% endif %}
+  {% else %}
+  <div class="small text-secondary mb-2">{{ proposal.mark_count }} / {{ proposal.gate }} marks</div>
+
+  <form method="POST" action="/fp/mark" class="mb-2">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <input type="hidden" name="origin" value="{{ origin }}">
+    <input type="hidden" name="event_id" value="{{ proposal.event_id }}">
+    <input type="hidden" name="rule_key" value="{{ proposal.rule_key }}">
+    <input type="hidden" name="host" value="{{ proposal.host }}">
+    <input type="hidden" name="user" value="{{ proposal.user }}">
+    <input type="hidden" name="fingerprint" value="{{ proposal.fingerprint }}">
+    <input type="hidden" name="ip" value="{{ proposal.ip }}">
+    <input type="hidden" name="sample" value="{{ proposal.sample }}">
+    <button type="submit" class="btn btn-sm btn-outline-secondary">False positive</button>
+  </form>
+
+  <form method="POST" action="/fp/mute" class="mb-2">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <input type="hidden" name="origin" value="{{ origin }}">
+    <input type="hidden" name="event_id" value="{{ proposal.event_id }}">
+    <input type="hidden" name="rule_key" value="{{ proposal.rule_key }}">
+    <input type="hidden" name="host" value="{{ proposal.host }}">
+    <input type="hidden" name="user" value="{{ proposal.user }}">
+    <input type="hidden" name="fingerprint" value="{{ proposal.fingerprint }}">
+    <input type="hidden" name="ip" value="{{ proposal.ip }}">
+    <input type="hidden" name="sample" value="{{ proposal.sample }}">
+    {% if proposal.entire_rule_ok %}
+    <label class="small d-block mb-1">
+      <input type="checkbox" name="entire_rule" value="1"> All hosts for this rule
+    </label>
+    {% endif %}
+    <div class="d-flex flex-wrap gap-1 align-items-center">
+      <button type="submit" name="hours" value="24" class="btn btn-sm btn-outline-warning">Mute 24h</button>
+      <button type="submit" name="hours" value="168" class="btn btn-sm btn-outline-warning">Mute 7d</button>
+      <input type="number" name="custom_hours" min="1" max="720" class="form-control form-control-sm" style="width:5.5rem;" placeholder="Hours" aria-label="Mute hours">
+      <button type="submit" name="hours" value="custom" class="btn btn-sm btn-outline-warning">Mute</button>
+    </div>
+  </form>
+
+  <form method="POST" action="/fp/suppress">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <input type="hidden" name="origin" value="{{ origin }}">
+    <input type="hidden" name="event_id" value="{{ proposal.event_id }}">
+    <input type="hidden" name="rule_key" value="{{ proposal.rule_key }}">
+    <input type="hidden" name="host" value="{{ proposal.host }}">
+    <input type="hidden" name="user" value="{{ proposal.user }}">
+    <input type="hidden" name="fingerprint" value="{{ proposal.fingerprint }}">
+    <input type="hidden" name="ip" value="{{ proposal.ip }}">
+    <input type="hidden" name="sample" value="{{ proposal.sample }}">
+    <label class="small text-secondary d-block mb-1" for="scope-{{ proposal.form_id }}">Scope</label>
+    <select id="scope-{{ proposal.form_id }}" name="scope" class="form-select form-select-sm mb-1">
+      {% for opt in proposal.scope_options %}
+      <option value="{{ opt.value }}">{{ opt.label }}</option>
+      {% endfor %}
+    </select>
+    {% if proposal.needs_confirmation and (is_admin or is_developer) %}
+    <label class="small d-block mb-1">
+      <input type="checkbox" name="admin_confirm" value="yes" required> Confirm permanent suppress
+    </label>
+    {% elif proposal.needs_confirmation %}
+    <div class="small mb-1">Needs confirmation</div>
+    {% endif %}
+    <button type="submit" class="btn btn-sm btn-primary" {% if proposal.needs_confirmation and not (is_admin or is_developer) %}disabled{% endif %}>
+      Suppress similar
+    </button>
+  </form>
+  {% endif %}
+</div>

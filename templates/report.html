@@ -12,6 +12,12 @@
     <a href="/" class="btn btn-secondary btn-sm">← Dashboard</a>
 </div>
 
+{% if flash %}
+<div class="notice-bar mb-3 {% if not flash.ok %}border-danger{% endif %}">
+  {{ flash.message }}
+</div>
+{% endif %}
+
 <div class="filter-links mb-3">
     <a href="/report?view=total" class="{% if view == 'total' or not view %}active{% endif %}">Total</a>
     <a href="/report?view=severe" class="{% if view == 'severe' %}active{% endif %}">Severe</a>
@@ -43,6 +49,7 @@
                         <th>IP</th>
                         <th>Host</th>
                         <th>Case</th>
+                        <th>Suppress</th>
                         {% if is_developer %}<th>Label</th>{% endif %}
                     </tr>
                 </thead>
@@ -105,6 +112,20 @@
                               <span class="text-secondary">—</span>
                             {% endif %}
                         </td>
+                        <td style="min-width:12rem;">
+                            {% if row.proposal %}
+                            <details class="suppress-details">
+                              <summary class="btn btn-sm btn-outline-secondary">Suppress</summary>
+                              <div class="mt-2">
+                                {% with proposal=row.proposal, next=request.full_path, origin='triage' %}
+                                {% include "_suppress_controls.html" %}
+                                {% endwith %}
+                              </div>
+                            </details>
+                            {% else %}
+                              <span class="text-secondary">—</span>
+                            {% endif %}
+                        </td>
                         {% if is_developer %}
                         <td style="min-width:11rem;">
                             {% if row.id %}
@@ -139,7 +160,7 @@
                     {% endfor %}
                     {% else %}
                     <tr>
-                        <td colspan="{% if is_developer %}11{% else %}10{% endif %}" class="text-center text-secondary py-4">
+                        <td colspan="{% if is_developer %}12{% else %}11{% endif %}" class="text-center text-secondary py-4">
                             No alerts in this view.
                         </td>
                     </tr>
