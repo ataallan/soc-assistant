@@ -6,18 +6,9 @@
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
   <div>
     <h1 class="page-title">Containment</h1>
-    <p class="page-subtitle">Manage blocked network addresses and user accounts.</p>
+    <p class="page-subtitle">Blocked addresses and accounts</p>
   </div>
   <span class="mode-pill">{{ containment_label or "Simulation mode" }}</span>
-</div>
-
-<div class="notice-bar">
-  {{ containment_notice or "Containment actions are recorded in this console for demonstration. They do not change production network controls." }}
-  {% if requires_live_confirm and not can_execute_containment %}
-  <div class="mt-2 small text-warning">Integrated response execute is admin-only. Analysts can view the list and open cases.</div>
-  {% elif requires_live_confirm %}
-  <div class="mt-2 small text-secondary">Live responses use a two-step flow: Preview response, then Confirm live response.</div>
-  {% endif %}
 </div>
 
 <div class="row g-3">
@@ -66,7 +57,7 @@
         </form>
         {% endif %}
       {% else %}
-      <p class="text-secondary small mb-0">View only — integrated response execute requires admin.</p>
+      <p class="text-secondary small mb-0">View only.</p>
       {% endif %}
     </div>
   </div>
@@ -130,7 +121,7 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <p class="text-secondary small mb-3">Review the intended live response before confirming. No request is sent until you confirm.</p>
+        <p class="text-secondary small mb-3">Nothing is sent until you confirm.</p>
         <dl class="row mb-0 small" id="containPreviewBody">
           <dt class="col-4 text-secondary">Action</dt><dd class="col-8" id="pvAction">—</dd>
           <dt class="col-4 text-secondary">Target</dt><dd class="col-8"><code id="pvTarget">—</code></dd>
@@ -181,7 +172,7 @@
     setText("pvAction", (data.action || action) + " " + (data.target_type || targetType));
     setText("pvTarget", data.target || target);
     setText("pvMode", data.mode_label || data.mode || "");
-    setText("pvUrl", data.would_call_url || "(log only — no URL configured)");
+    setText("pvUrl", data.would_call_url || "—");
     const body = data.body_summary || {};
     document.getElementById("pvBody").textContent = JSON.stringify(body, null, 2);
     const denied = document.getElementById("pvDenied");

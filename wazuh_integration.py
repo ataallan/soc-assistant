@@ -66,9 +66,7 @@ def _url(path: str) -> str:
 def _credentials_ok() -> bool:
     global _LAST_AUTH_ERROR
     if not API_PASS:
-        _LAST_AUTH_ERROR = (
-            "Wazuh password is not set. Add WAZUH_PASS to .env to enable live authentication."
-        )
+        _LAST_AUTH_ERROR = "Wazuh password is not set."
         print("⚠️ WAZUH_PASS is not set. Add it to your .env to enable live Wazuh auth.")
         return False
     return True
@@ -121,10 +119,7 @@ def alert_ingest_status() -> Dict[str, Any]:
         "indexer_via_wsl": INDEXER_VIA_WSL,
         "indexer_error": _LAST_INDEXER_ERROR,
         "manager_api_host": wazuh_api_host(),
-        "note": (
-            "Security alerts come from the Wazuh Indexer (wazuh-alerts-*). "
-            "/manager/logs is manager module noise and is never used as an alert source."
-        ),
+        "note": "Indexer" if indexer_configured() else "Manager API",
     }
 
 
@@ -499,7 +494,7 @@ def _fetch_indexer_via_wsl(limit: int) -> Tuple[Optional[Dict[str, Any]], Option
             return None, "WSL curl returned empty body"
         return json.loads(text), None
     except FileNotFoundError:
-        return None, "wsl command not found (WAZUH_INDEXER_VIA_WSL=true requires Windows+WSL)"
+        return None, "Indexer bridge is unavailable."
     except Exception as exc:
         return None, f"WSL indexer fetch failed: {exc}"
 
@@ -523,7 +518,7 @@ def fetch_indexer_alert_details(limit: int = 5) -> List[Dict[str, Any]]:
     """Query wazuh-alerts-* and map _source through _structure_alert."""
     global _LAST_INDEXER_ERROR, _LAST_ALERT_SOURCE
     if not indexer_configured():
-        _LAST_INDEXER_ERROR = "WAZUH_INDEXER_PASS is not set."
+        _LAST_INDEXER_ERROR = "Indexer credentials are not configured."
         return []
 
     if INDEXER_VIA_WSL:

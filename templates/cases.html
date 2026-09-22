@@ -6,7 +6,6 @@
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
   <div>
     <h1 class="page-title">Cases</h1>
-    <p class="page-subtitle">Open, track, and close investigation tickets from triage or manually. SLA due times follow severity.</p>
   </div>
   <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#newCaseForm" aria-expanded="false">
     <i class="bi bi-plus-lg me-1"></i> New case
@@ -159,9 +158,7 @@
     </table>
   </div>
   {% else %}
-  <p class="text-secondary mb-0">
-    No cases in this view. Open one from the triage report or use <strong>New case</strong>.
-  </p>
+  <p class="text-secondary mb-0">No cases in this view.</p>
   {% endif %}
 </div>
 

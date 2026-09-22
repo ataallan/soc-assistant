@@ -1,16 +1,12 @@
 {% extends "base.html" %}
-{% block title %}FP Review{% endblock %}
+{% block title %}False positives{% endblock %}
 
 {% block content %}
 
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
   <div>
-    <h1 class="page-title">False-Positive Review</h1>
-    <p class="page-subtitle">
-      Top noisy rule ids from the last {{ event_limit }} triage events
-      ({{ event_count }} loaded). Use this to tune
-      <code>config/allowlists.yml</code> and noise YAML rules.
-    </p>
+    <h1 class="page-title">False positives</h1>
+    <p class="page-subtitle">{{ event_count }} events · last {{ event_limit }}</p>
   </div>
   <div class="d-flex flex-wrap gap-2">
     <a class="btn btn-outline-secondary btn-sm" href="/fp-review?limit=500">Last 500</a>
@@ -18,13 +14,6 @@
     <a class="btn btn-outline-secondary btn-sm" href="/fp-review?limit=2000">Last 2000</a>
     <a class="btn btn-outline-primary btn-sm" href="/labels">Labeling</a>
   </div>
-</div>
-
-<div class="notice-bar mb-3">
-  High <strong>count</strong> with high <strong>% low/ignore</strong> usually means safe suppress candidates.
-  Add Wazuh rule ids under <code>suppress_wazuh_rule_ids</code>, or trusted
-  <code>ips</code> / <code>cidrs</code> / <code>users</code> / <code>hosts</code>.
-  See <code>docs/FALSE_POSITIVES.md</code>.
 </div>
 
 <div class="soc-panel">
@@ -65,9 +54,7 @@
     </table>
   </div>
   {% else %}
-  <p class="text-secondary mb-0">
-    No triage events yet. Run the CSV or Wazuh watcher, then refresh this page.
-  </p>
+  <p class="text-secondary mb-0">No triage events yet.</p>
   {% endif %}
 </div>
 

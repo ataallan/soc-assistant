@@ -2,14 +2,6 @@
 {% block title %}Triage Report{% endblock %}
 
 {% block content %}
-{% if ml_assist_only %}
-<div class="notice-bar mb-3">
-  ML is <strong>assist-only</strong> until more live labels are trained.
-  Displayed severity comes from rules; ML appears as assist with confidence.
-</div>
-{% endif %}
-
-
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
     <div>
         <h1 class="page-title">Triage Report</h1>
@@ -76,9 +68,6 @@
                             {% else %}
                               <span class="text-secondary">ML unavailable</span>
                             {% endif %}
-                            {% if row.severity_source %}
-                              <div class="small text-secondary">source: {{ row.severity_source }}</div>
-                            {% endif %}
                         </td>
                         <td>{{ row.rule_based }}</td>
                         <td style="max-width: 220px; white-space: normal;">
@@ -119,8 +108,8 @@
                     {% endfor %}
                     {% else %}
                     <tr>
-                        <td colspan="9" class="text-center text-secondary py-4">
-                            No rows match this filter. Run a CSV or Wazuh watcher to populate the triage report.
+                        <td colspan="10" class="text-center text-secondary py-4">
+                            No alerts in this view.
                         </td>
                     </tr>
                     {% endif %}

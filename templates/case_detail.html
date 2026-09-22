@@ -156,9 +156,9 @@
     </div>
 
     <div class="soc-panel mb-3">
-      <h4 class="mb-2" style="font-size:1.05rem;">External ticket</h4>
+      <h4 class="mb-2" style="font-size:1.05rem;">Ticket</h4>
       <p class="small text-secondary mb-3">
-        Sync mode: <strong>{{ case_sync_mode_label or case_sync_mode or 'simulated' }}</strong>
+        <span class="mode-pill">{{ case_sync_mode_label or "Simulation" }}</span>
       </p>
       {% if case.external_url %}
       <a class="btn btn-sm btn-outline-info mb-2" href="{{ case.external_url }}" target="_blank" rel="noopener noreferrer">

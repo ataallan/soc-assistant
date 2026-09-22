@@ -1711,10 +1711,7 @@ def backup_sqlite(
             "backend": "postgres",
             "path": None,
             "kept": 0,
-            "message": (
-                "SQLite file backup is not available while PostgreSQL is in use. "
-                "Use pg_dump or your host's Postgres backup tools instead."
-            ),
+            "message": "File backup is available for SQLite only.",
         }
 
     try:
@@ -1727,7 +1724,7 @@ def backup_sqlite(
             "backend": backend,
             "path": None,
             "kept": 0,
-            "message": f"Backup is only supported for SQLite (current backend: {backend}).",
+            "message": "File backup is available for SQLite only.",
         }
 
     src = Path(db_path) if db_path is not None else get_db_path()
@@ -1740,7 +1737,7 @@ def backup_sqlite(
             "backend": "sqlite",
             "path": None,
             "kept": 0,
-            "message": f"SQLite database file not found: {src}",
+            "message": "Database file was not found.",
         }
 
     dest_root = Path(dest_dir)
@@ -1790,5 +1787,5 @@ def backup_sqlite(
         "path": str(dest),
         "kept": remaining,
         "removed": removed,
-        "message": f"Backup saved to {dest} (keeping last {keep_n}).",
+        "message": "Backup saved.",
     }

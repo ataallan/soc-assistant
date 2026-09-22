@@ -97,3 +97,53 @@ def test_health_page_renders(app_client):
     body = resp.data.decode("utf-8")
     assert "System Health" in body
     assert "Storage" in body
+    assert "Assist-only" in body
+    assert "until more live labels" not in body
+    assert "pg_dump" not in body
+    assert "WAZUH_INDEXER_PASS" not in body
+
+
+_TUTORIAL_PHRASES = (
+    "Phase 3",
+    "Phase 5",
+    "Capstone",
+    "How it works",
+    "assist-only until",
+    "for demonstration",
+    "production network controls",
+    "pg_dump",
+    "FALSE_POSITIVES",
+    "allowlists.yml",
+    "suppress_wazuh_rule_ids",
+    "data/backups",
+    "WAZUH_INDEXER_PASS",
+    "confirm=1",
+    "CV macro",
+    "manager/logs",
+    "VIA_WSL",
+    ".env",
+)
+
+
+def test_operator_pages_omit_tutorial_copy(app_client):
+    client, dashboard = app_client
+    with client.session_transaction() as sess:
+        sess["user"] = "ops@example.com"
+
+    paths = ["/", "/blocks", "/labels", "/report", "/fp-review", "/cases", "/analytics", "/logs/csv"]
+    with patch.object(dashboard, "get_token", return_value=None), patch.object(
+        dashboard, "get_last_auth_error", return_value=None
+    ), patch.object(dashboard, "fetch_wazuh_alert_details", return_value=[]):
+        pages = {path: client.get(path) for path in paths}
+        pages["/health"] = client.get("/health")
+        pages["/logs/wazuh"] = client.get("/logs/wazuh")
+
+    for path, resp in pages.items():
+        assert resp.status_code == 200, path
+        body = resp.data.decode("utf-8")
+        for phrase in _TUTORIAL_PHRASES:
+            assert phrase not in body, f"{phrase} still on {path}"
+
+    blocks = pages["/blocks"].data.decode("utf-8")
+    assert "Simulation mode" in blocks
+    assert "mode-pill" in blocks
