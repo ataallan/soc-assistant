@@ -12,6 +12,9 @@ Torch, torchvision, and ultralytics are not required. Pip renames a
 distribution by replacing its first character with ``~`` while upgrading.
 An interrupted torch install leaves ``~orch``. Those leftovers are safe
 to remove when the core packages still import.
+
+The Windows Setup.exe bootstrap uses the same checks against an
+embeddable CPython directory (``runtime/python.exe``) instead of a venv.
 """
 
 from __future__ import annotations
@@ -34,14 +37,30 @@ CRITICAL_IMPORT_STATEMENT = (
 # Pip's in-progress rename drops the first character and prefixes "~".
 OPTIONAL_ML_PACKAGES = ("torch", "torchvision", "torchaudio", "ultralytics", "tensorflow")
 
+# Pinned embeddable CPython for AIPoweredSOCAssistantSetup.exe.
+# installer/bootstrap_embedded_python.ps1 repeats these strings so setup can
+# download the runtime before this interpreter exists. Tests keep them in sync.
+EMBEDDED_PYTHON_VERSION = "3.12.10"
+EMBEDDED_PYTHON_FILENAME = "python-3.12.10-embeddable-amd64.zip"
+EMBEDDED_PYTHON_URL = (
+    "https://www.python.org/ftp/python/"
+    + EMBEDDED_PYTHON_VERSION
+    + "/"
+    + EMBEDDED_PYTHON_FILENAME
+)
+EMBEDDED_PYTHON_SHA256 = "156c7eea90d58cd7e91a23f28a0056616b13e9f4cf4901b7b99b837b7848c6da"
+GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
+RUNTIME_DIR_NAME = "runtime"
+
 
 def venv_python(venv: Path) -> Path | None:
-    """Return the venv interpreter, Windows layout first."""
+    """Return the interpreter. Windows venv layout first, then embeddable Python."""
     candidates = (
         venv / "Scripts" / "python.exe",
         venv / "Scripts" / "python",
         venv / "bin" / "python",
         venv / "bin" / "python.exe",
+        venv / "python.exe",
     )
     for path in candidates:
         if path.is_file():
@@ -214,6 +233,38 @@ def scrub_optional(venv: Path) -> list[str]:
     return sorted(set(removed))
 
 
+def render_embedded_pth(original: str) -> str:
+    """Enable site-packages in an embeddable ``python*._pth`` file.
+
+    The official zip ships ``#import site``, which hides pip and installed
+    packages. The stdlib zip name on the first line is kept.
+    """
+    zip_name = "python312.zip"
+    for line in original.splitlines():
+        stripped = line.strip()
+        if (
+            stripped.startswith("python")
+            and stripped.endswith(".zip")
+            and " " not in stripped
+            and "/" not in stripped
+            and "\\" not in stripped
+        ):
+            zip_name = stripped
+            break
+    lines = (zip_name, ".", r"Lib\site-packages", "import site")
+    return "\r\n".join(lines) + "\r\n"
+
+
+def write_embedded_pth(runtime: Path) -> Path:
+    """Rewrite the embeddable ``python*._pth`` so pip can install packages."""
+    matches = sorted(path for path in runtime.glob("python*._pth") if path.is_file())
+    if not matches:
+        raise FileNotFoundError(f"No python*._pth file in {runtime}")
+    path = matches[0]
+    path.write_bytes(render_embedded_pth(path.read_text(encoding="utf-8")).encode("ascii"))
+    return path
+
+
 def _print_json(payload: dict[str, str]) -> None:
     sys.stdout.write(json.dumps(payload) + "\n")
 
@@ -232,6 +283,9 @@ def main(argv: list[str] | None = None) -> int:
     risk.add_argument("path")
     risk.add_argument("--desktop", default="")
 
+    pth = sub.add_parser("write-pth", help="Enable site-packages in an embeddable python*._pth")
+    pth.add_argument("runtime")
+
     args = parser.parse_args(argv)
     if args.cmd == "assess":
         _print_json(assess_venv(Path(args.venv)))
@@ -243,6 +297,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "path-risk":
         risky = cloud_locked_install_path(args.path, args.desktop or None)
         sys.stdout.write("risky\n" if risky else "ok\n")
+        return 0
+    if args.cmd == "write-pth":
+        try:
+            written = write_embedded_pth(Path(args.runtime))
+        except FileNotFoundError as exc:
+            sys.stderr.write(str(exc) + "\n")
+            return 1
+        _print_json({"pth": written.name})
         return 0
     return 2
 

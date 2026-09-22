@@ -56,3 +56,7 @@ data/backups/
 install.log
 *.lnk
 AI-Powered-SOC-Assistant-standalone.zip
+
+# Windows Setup.exe build output and a locally vendored embeddable Python zip
+dist/
+installer/cache/
