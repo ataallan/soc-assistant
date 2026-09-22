@@ -5,8 +5,7 @@
 
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
   <div>
-    <h1 class="page-title">Live Labeling</h1>
-    <p class="page-subtitle">Pull Wazuh alerts, assign analyst severity, then retrain the assist model.</p>
+    <h1 class="page-title">Labeling</h1>
   </div>
   <div class="d-flex flex-wrap gap-2">
     <form method="POST" action="/labels/pull" class="d-inline">
@@ -29,11 +28,6 @@
   {{ flash.message }}
 </div>
 {% endif %}
-
-<div class="notice-bar mb-3">
-  ML remains <strong>assist-only</strong> until enough live labels are trained.
-  Operator-facing severity stays rules-based; labeled rows improve future assist confidence.
-</div>
 
 <div class="row g-3 mb-4">
   <div class="col-6 col-md-3">
@@ -117,10 +111,7 @@
     </table>
   </div>
   {% else %}
-  <p class="text-secondary mb-0">
-    No pending items. Click <strong>Pull from Wazuh</strong> to enqueue recent alerts
-    (requires Wazuh API credentials in <code>.env</code>).
-  </p>
+  <p class="text-secondary mb-0">No pending items.</p>
   {% endif %}
 </div>
 

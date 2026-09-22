@@ -18,7 +18,6 @@ from containment import (
     execute_confirmed,
     get_mode,
     get_mode_label,
-    get_ui_notice,
     is_integration_mode,
     load_blocked,
     preview_block_ip,
@@ -858,7 +857,6 @@ def view_blocks():
         blocks=blocks,
         containment_mode=mode,
         containment_label=get_mode_label(),
-        containment_notice=get_ui_notice(),
         can_execute_containment=can_execute,
         requires_live_confirm=live,
     )
@@ -893,7 +891,7 @@ def blocks_preview():
     else:
         return jsonify({
             "ok": False,
-            "message": "Provide action (block|unblock) and target_type (ip|user).",
+            "message": "Choose an action and a target.",
         }), 400
 
     status = 200 if preview.get("ok") else 400
@@ -916,7 +914,7 @@ def blocks_execute():
         return redirect("/blocks")
 
     if not _request_confirm_flag():
-        msg = "Confirm required for live response (confirm=1)."
+        msg = "Confirm the response before it is sent."
         if _wants_json():
             return jsonify({"ok": False, "message": msg, "requires_confirm": True}), 400
         session["auth_flash"] = {"ok": False, "message": msg}
@@ -1046,7 +1044,8 @@ def collect_health() -> dict:
         wazuh_error = get_last_auth_error()
     except Exception as exc:
         authenticated = False
-        wazuh_error = f"Could not check Wazuh authentication: {exc}"
+        print(f"Wazuh auth check failed: {exc}")
+        wazuh_error = "Could not check Wazuh authentication."
 
     try:
         labels = label_queue_counts()
@@ -1073,7 +1072,6 @@ def collect_health() -> dict:
         "ml": {
             "assist_only": get_ml_assist_only(),
             "confidence_threshold": get_ml_confidence_threshold(),
-            "note": "ML is assist-only until more live labels are trained.",
         },
         "labeling": labels,
     }
@@ -1302,21 +1300,18 @@ def labels_retrain():
             combine_labeled=True,
         )
         if not metrics:
-            payload = {"ok": False, "message": "Retrain failed — check training data."}
+            payload = {"ok": False, "message": "Retrain failed."}
             status = 400
         else:
             payload = {
                 "ok": True,
-                "message": (
-                    f"Retrain complete — {metrics.get('model')} · "
-                    f"CV macro F1={metrics.get('cv_macro_f1', 0):.3f} · "
-                    f"N={metrics.get('n_samples')}"
-                ),
+                "message": "Model retrained.",
                 "metrics": metrics,
             }
             status = 200
     except Exception as exc:
-        payload = {"ok": False, "message": f"Retrain error: {exc}"}
+        print(f"Retrain failed: {exc}")
+        payload = {"ok": False, "message": "Retrain failed."}
         status = 500
 
     wants_json = (

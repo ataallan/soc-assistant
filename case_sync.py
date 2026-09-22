@@ -52,9 +52,9 @@ def stub_token_configured() -> bool:
 
 def get_mode_label() -> str:
     return {
-        "simulated": "Simulated ticket sync",
-        "stub": "Stub ticket sync",
-        "jira": "Jira ticket sync",
+        "simulated": "Simulation",
+        "stub": "Integration",
+        "jira": "Jira",
     }[get_mode()]
 
 
@@ -227,7 +227,7 @@ def sync_case(
             "auth_configured": False,
         }
         ok = True
-        message = f"Simulated ticket {ticket_id} linked to case #{case_id}."
+        message = f"Ticket {ticket_id} linked to case #{case_id}."
     else:
         stub_info = _http_sync(case, system=system)
         ok = bool(stub_info.get("ok"))
@@ -236,7 +236,7 @@ def sync_case(
         if ok and ticket_id and not external_url:
             external_url = _browse_url(system, ticket_id)
         if ok:
-            message = f"Synced case #{case_id} → {system}:{ticket_id}."
+            message = f"Ticket {ticket_id} linked to case #{case_id}."
         else:
             err = stub_info.get("error") or f"HTTP {stub_info.get('status_code')}"
             message = f"Ticket sync failed: {err}"

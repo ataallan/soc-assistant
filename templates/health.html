@@ -6,9 +6,7 @@
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
   <div>
     <h1 class="page-title">System Health</h1>
-    <p class="page-subtitle">Storage, Wazuh connectivity, and live watchers at a glance.</p>
   </div>
-  <a class="btn btn-outline-secondary btn-sm" href="/health.json" target="_blank" rel="noopener">View JSON</a>
 </div>
 
 {% if flash %}
@@ -35,7 +33,7 @@
           {% endif %}
         </dd>
         <dt class="col-5 text-secondary">Location</dt>
-        <dd class="col-7"><code class="small">{{ health.storage.location }}</code></dd>
+        <dd class="col-7 text-break">{{ health.storage.location }}</dd>
         <dt class="col-5 text-secondary">Triage events</dt>
         <dd class="col-7">{{ health.storage.triage_events }}</dd>
         <dt class="col-5 text-secondary">Active blocks</dt>
@@ -50,13 +48,11 @@
         <button type="submit" class="btn btn-primary btn-sm">
           <i class="bi bi-hdd me-1"></i> Back up database
         </button>
-        <span class="text-secondary small">Saves a copy under <code>data/backups/</code> (keeps last 10).</span>
+        <span class="text-secondary small">Keeps the last 10 copies.</span>
       </form>
-      {% else %}
+      {% elif health.storage.backend != 'sqlite' %}
       <hr class="border-secondary opacity-25 my-3">
-      <p class="text-secondary small mb-0">
-        File backup from this console is for SQLite only. With PostgreSQL, use your host’s backup tools (for example <code>pg_dump</code>).
-      </p>
+      <p class="text-secondary small mb-0">File backup is available for SQLite only.</p>
       {% endif %}
     </div>
   </div>
@@ -68,7 +64,7 @@
       </h4>
       <dl class="row mb-0 small">
         <dt class="col-5 text-secondary">API host</dt>
-        <dd class="col-7"><code>{{ health.wazuh.api_host }}</code></dd>
+        <dd class="col-7 text-break">{{ health.wazuh.api_host }}</dd>
         <dt class="col-5 text-secondary">Authentication</dt>
         <dd class="col-7">
           {% if health.wazuh.authenticated %}
@@ -77,7 +73,7 @@
           <span class="status-chip stopped"><span class="dot"></span> Not connected</span>
           {% endif %}
         </dd>
-        <dt class="col-5 text-secondary">Note</dt>
+        <dt class="col-5 text-secondary">Status</dt>
         <dd class="col-7 text-secondary">
           {% if health.wazuh.authenticated %}
           Credentials accepted.
@@ -90,24 +86,27 @@
         {% if health.wazuh.ingest %}
         <dt class="col-5 text-secondary">Alert source</dt>
         <dd class="col-7">
-          <code>{{ health.wazuh.ingest.preferred }}</code>
+          {% if health.wazuh.ingest.preferred == 'indexer' %}Indexer{% else %}Manager API{% endif %}
           {% if health.wazuh.ingest.last_source %}
-          <span class="text-secondary">(last: {{ health.wazuh.ingest.last_source }})</span>
+          <span class="text-secondary">
+            · last
+            {% if health.wazuh.ingest.last_source == 'indexer' %}Indexer
+            {% elif health.wazuh.ingest.last_source == 'manager_api' %}Manager API
+            {% else %}{{ health.wazuh.ingest.last_source }}{% endif %}
+          </span>
           {% endif %}
         </dd>
         <dt class="col-5 text-secondary">Indexer</dt>
-        <dd class="col-7 small text-secondary">
+        <dd class="col-7 small">
           {% if health.wazuh.ingest.indexer_configured %}
-          configured @ <code>{{ health.wazuh.ingest.indexer_host }}</code>
-          / <code>{{ health.wazuh.ingest.indexer_index }}</code>
-          {% if health.wazuh.ingest.indexer_via_wsl %} (via WSL){% endif %}
+          {{ health.wazuh.ingest.indexer_host }}
+          <span class="text-secondary">· {{ health.wazuh.ingest.indexer_index }}</span>
           {% else %}
-          not configured — set WAZUH_INDEXER_PASS (and VIA_WSL=true on Windows)
+          <span class="text-secondary">Not configured</span>
           {% endif %}
           {% if health.wazuh.ingest.indexer_error %}
           <div class="text-warning">{{ health.wazuh.ingest.indexer_error }}</div>
           {% endif %}
-          <div class="mt-1">{{ health.wazuh.ingest.note }}</div>
         </dd>
         {% endif %}
       </dl>
@@ -137,15 +136,13 @@
           {% endif %}
         </dd>
       </dl>
-      <p class="text-secondary small mt-3 mb-0">
-        Start or stop watchers from the Home console.
-      </p>
     </div>
-  
+  </div>
+
   <div class="col-lg-4">
     <div class="soc-panel h-100">
       <h4 class="mb-3" style="font-size:1.05rem;letter-spacing:-0.02em;">
-        <i class="bi bi-cpu me-1"></i> ML mode
+        <i class="bi bi-cpu me-1"></i> Model
       </h4>
       <dl class="row mb-0 small">
         <dt class="col-5 text-secondary">Mode</dt>
@@ -153,20 +150,17 @@
           {% if health.ml and health.ml.assist_only %}
           <span class="status-chip idle"><span class="dot"></span> Assist-only</span>
           {% else %}
-          <span class="status-chip running"><span class="dot"></span> Override allowed</span>
+          <span class="status-chip running"><span class="dot"></span> Active</span>
           {% endif %}
         </dd>
         <dt class="col-5 text-secondary">Threshold</dt>
         <dd class="col-7">{{ '%.0f'|format(((health.ml.confidence_threshold if health.ml else 0.7) or 0.7) * 100) }}%</dd>
-        <dt class="col-5 text-secondary">Note</dt>
-        <dd class="col-7 text-secondary">{{ health.ml.note if health.ml else 'ML is assist-only until more live labels are trained.' }}</dd>
+        <dt class="col-5 text-secondary">Labels</dt>
+        <dd class="col-7">
+          {{ health.labeling.pending if health.labeling else 0 }} pending ·
+          {{ health.labeling.labeled if health.labeling else 0 }} labeled
+        </dd>
       </dl>
-      <p class="text-secondary small mt-3 mb-0">
-        Label queue:
-        {{ health.labeling.pending if health.labeling else 0 }} pending ·
-        {{ health.labeling.labeled if health.labeling else 0 }} labeled.
-        <a href="/labels">Open Labeling</a>
-      </p>
     </div>
   </div>
 

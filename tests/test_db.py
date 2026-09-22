@@ -303,7 +303,8 @@ def test_backup_sqlite_postgres_noop(monkeypatch):
     result = db.backup_sqlite(dest_dir="/tmp/should_not_matter")
     assert result["ok"] is False
     assert result["backend"] == "postgres"
-    assert "PostgreSQL" in result["message"] or "Postgres" in result["message"]
+    assert result["message"] == "File backup is available for SQLite only."
+    assert "pg_dump" not in result["message"]
 
 
 def test_get_storage_status_sqlite(tmp_path, monkeypatch):

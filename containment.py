@@ -74,25 +74,8 @@ def get_mode_label() -> str:
 
 
 def get_ui_notice() -> str:
-    """One clean sentence for the SOC UI."""
-    return {
-        "simulated": (
-            "Containment actions are recorded in this console for demonstration. "
-            "They do not change production network controls."
-        ),
-        "dry_run": (
-            "Preview mode is on. Actions are logged for review and are not "
-            "applied to the block list."
-        ),
-        "stub": (
-            "Response actions are sent through the configured integration "
-            "endpoint after admin confirmation, then reflected in this console."
-        ),
-        "live": (
-            "Response actions are sent through the configured integration "
-            "endpoint after admin confirmation, then reflected in this console."
-        ),
-    }[get_mode()]
+    """Operator state is the mode pill. Do not return a tutorial paragraph."""
+    return ""
 
 
 def get_stub_url() -> str:
@@ -163,15 +146,6 @@ def _audit(
         mode=get_mode(),
         detail=detail,
     )
-
-
-def _mode_label_short(mode: str) -> str:
-    return {
-        "simulated": "Simulation",
-        "dry_run": "Preview",
-        "stub": "Integration",
-        "live": "Integration",
-    }.get(mode, mode.title())
 
 
 def _build_payload(action: str, target_type: str, target: str) -> Dict[str, Any]:
@@ -294,10 +268,7 @@ def _preview(
         "allowed": allowed,
         "requires_confirm": live,
         "auth_configured": stub_token_configured() if live else False,
-        "message": (
-            f"Preview: {action} {target_type} {target}"
-            + (" — confirmation required before live response." if live else "")
-        ),
+        "message": f"Preview: {action} {target_type} {target}",
     }
 
 
@@ -364,7 +335,7 @@ def block_ip(ip: str) -> Dict[str, Any]:
 
     if mode == "dry_run":
         _audit("block", "ip", ip, "dry_run")
-        msg = f"[Preview] Block IP queued for review: {ip}"
+        msg = f"Preview only. {ip} was not blocked."
         print(msg)
         return {"ok": True, "mode": mode, "message": msg, "changed": False}
 
@@ -374,7 +345,7 @@ def block_ip(ip: str) -> Dict[str, Any]:
         public = _public_stub_result(stub_info)
         if not stub_info.get("ok"):
             _audit("block", "ip", ip, "stub_failed", public)
-            msg = f"[STUB FAILED] IP {ip}: {public}"
+            msg = f"Block failed for {ip}."
             print(msg)
             return {
                 "ok": False,
@@ -388,8 +359,7 @@ def block_ip(ip: str) -> Dict[str, Any]:
     changed = save_block("ip", ip, mode=mode, note="block_ip")
     public = _public_stub_result(stub_info) if stub_info else None
     _audit("block", "ip", ip, "applied", {"stub": public} if public else None)
-    label = _mode_label_short(mode)
-    msg = f"[{label}] IP blocked in console: {ip}"
+    msg = f"Blocked {ip}."
     print(msg)
     return {"ok": True, "mode": mode, "message": msg, "changed": changed, "stub": public}
 
@@ -402,7 +372,7 @@ def unblock_ip(ip: str) -> Dict[str, Any]:
 
     if mode == "dry_run":
         _audit("unblock", "ip", ip, "dry_run")
-        msg = f"[Preview] Unblock IP queued for review: {ip}"
+        msg = f"Preview only. {ip} was not unblocked."
         print(msg)
         return {"ok": True, "mode": mode, "message": msg, "changed": False}
 
@@ -415,7 +385,7 @@ def unblock_ip(ip: str) -> Dict[str, Any]:
             return {
                 "ok": False,
                 "mode": mode,
-                "message": f"[STUB FAILED] {public}",
+                "message": f"Unblock failed for {ip}.",
                 "changed": False,
                 "stub": public,
             }
@@ -424,8 +394,7 @@ def unblock_ip(ip: str) -> Dict[str, Any]:
     changed = remove_block("ip", ip)
     public = _public_stub_result(stub_info) if stub_info else None
     _audit("unblock", "ip", ip, "applied", {"stub": public} if public else None)
-    label = _mode_label_short(mode)
-    msg = f"[{label}] Unblocked IP {ip}"
+    msg = f"Unblocked {ip}."
     print(msg)
     return {"ok": True, "mode": mode, "message": msg, "changed": changed, "stub": public}
 
@@ -438,7 +407,7 @@ def block_user(user: str) -> Dict[str, Any]:
 
     if mode == "dry_run":
         _audit("block", "user", user, "dry_run")
-        msg = f"[Preview] Block user queued for review: {user}"
+        msg = f"Preview only. {user} was not blocked."
         print(msg)
         return {"ok": True, "mode": mode, "message": msg, "changed": False}
 
@@ -451,7 +420,7 @@ def block_user(user: str) -> Dict[str, Any]:
             return {
                 "ok": False,
                 "mode": mode,
-                "message": f"[STUB FAILED] {public}",
+                "message": f"Block failed for {user}.",
                 "changed": False,
                 "stub": public,
             }
@@ -460,8 +429,7 @@ def block_user(user: str) -> Dict[str, Any]:
     changed = save_block("user", user, mode=mode, note="block_user")
     public = _public_stub_result(stub_info) if stub_info else None
     _audit("block", "user", user, "applied", {"stub": public} if public else None)
-    label = _mode_label_short(mode)
-    msg = f"[{label}] User blocked in console: {user}"
+    msg = f"Blocked {user}."
     print(msg)
     return {"ok": True, "mode": mode, "message": msg, "changed": changed, "stub": public}
 
@@ -474,7 +442,7 @@ def unblock_user(user: str) -> Dict[str, Any]:
 
     if mode == "dry_run":
         _audit("unblock", "user", user, "dry_run")
-        msg = f"[Preview] Unblock user queued for review: {user}"
+        msg = f"Preview only. {user} was not unblocked."
         print(msg)
         return {"ok": True, "mode": mode, "message": msg, "changed": False}
 
@@ -487,7 +455,7 @@ def unblock_user(user: str) -> Dict[str, Any]:
             return {
                 "ok": False,
                 "mode": mode,
-                "message": f"[STUB FAILED] {public}",
+                "message": f"Unblock failed for {user}.",
                 "changed": False,
                 "stub": public,
             }
@@ -496,8 +464,7 @@ def unblock_user(user: str) -> Dict[str, Any]:
     changed = remove_block("user", user)
     public = _public_stub_result(stub_info) if stub_info else None
     _audit("unblock", "user", user, "applied", {"stub": public} if public else None)
-    label = _mode_label_short(mode)
-    msg = f"[{label}] Unblocked user {user}"
+    msg = f"Unblocked {user}."
     print(msg)
     return {"ok": True, "mode": mode, "message": msg, "changed": changed, "stub": public}
 

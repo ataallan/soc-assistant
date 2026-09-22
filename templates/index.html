@@ -104,15 +104,6 @@
     </div>
 </div>
 
-{% if ml_assist_only %}
-<div class="notice-bar mb-4">
-  <i class="bi bi-info-circle me-1"></i>
-  ML is assist-only until more live labels are trained
-  (threshold {{ '%.0f'|format((ml_threshold or 0.7) * 100) }}% confidence).
-  <a href="/labels" class="ms-1">Open Labeling →</a>
-</div>
-{% endif %}
-
 <!-- KPI tiles (clickable → filtered triage details) -->
 <div class="kpi-row mb-4" role="navigation" aria-label="Alert detail views">
     <a href="/report?view=total" class="kpi-tile" title="Open all alert details" aria-label="Total alerts — view details">
@@ -189,27 +180,27 @@
     <a href="/logs/wazuh" class="module-card">
         <div class="module-icon"><i class="bi bi-shield-exclamation"></i></div>
         <h4>Wazuh Alerts</h4>
-        <p>View real-time security alerts from the Wazuh manager.</p>
+        <p>Live security alerts</p>
     </a>
     <a href="/logs/csv" class="module-card">
         <div class="module-icon"><i class="bi bi-filetype-csv"></i></div>
         <h4>CSV Logs</h4>
-        <p>Ingested log events and activity from CSV feeds.</p>
+        <p>Ingested log events</p>
     </a>
     <a href="/blocks" class="module-card">
         <div class="module-icon"><i class="bi bi-shield-lock"></i></div>
         <h4>Containment</h4>
-        <p>Review and manage blocked IPs and user accounts.</p>
+        <p>Blocked addresses and accounts</p>
     </a>
     <a href="/analytics" class="module-card">
         <div class="module-icon"><i class="bi bi-graph-up"></i></div>
         <h4>Analytics</h4>
-        <p>Trends, ML predictions, and operational insights.</p>
+        <p>Alert trends</p>
     </a>
     <a href="/report" class="module-card">
         <div class="module-icon"><i class="bi bi-clipboard2-data"></i></div>
         <h4>Triage Report</h4>
-        <p>Security analysis log report with severity filters.</p>
+        <p>Severity and recommendations</p>
     </a>
 </div>
 
