@@ -13,7 +13,9 @@
       input.setAttribute("type", showing ? "password" : "text");
       btn.textContent = showing ? "Show" : "Hide";
       btn.setAttribute("aria-pressed", showing ? "false" : "true");
-      btn.setAttribute("aria-label", showing ? "Show password" : "Hide password");
+      var showLabel = btn.getAttribute("data-show-label") || "Show password";
+      var hideLabel = btn.getAttribute("data-hide-label") || "Hide password";
+      btn.setAttribute("aria-label", showing ? showLabel : hideLabel);
     });
   });
 
