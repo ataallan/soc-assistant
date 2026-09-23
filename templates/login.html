@@ -22,6 +22,9 @@
         {% if error %}
         <div class="alert alert-danger">{{ error }}</div>
         {% endif %}
+        {% if notice %}
+        <div class="alert alert-info">{{ notice }}</div>
+        {% endif %}
         {% if message %}
         <div class="alert alert-success">{{ message }}</div>
         {% endif %}

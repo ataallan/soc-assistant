@@ -41,9 +41,10 @@ def client(tmp_path, monkeypatch):
 
 
 def _login(client, user):
+    import dashboard
+
     with client.session_transaction() as sess:
-        sess["user"] = user
-        sess["email_2fa_ok"] = True
+        dashboard.stamp_auth_session(sess, user, email_2fa_ok=True)
 
 
 def _headers():

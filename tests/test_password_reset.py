@@ -68,12 +68,15 @@ def test_login_links_to_forgot_password(client):
 
 
 def test_forgot_password_stays_public_for_half_session(client):
-    http, _ = client
+    http, dashboard = client
     _register_admin(http)
     with http.session_transaction() as sess:
-        sess["user"] = "admin@example.com"
-        sess["role"] = "admin"
-        sess["email_2fa_ok"] = False
+        dashboard.stamp_auth_session(
+            sess,
+            "admin@example.com",
+            role="admin",
+            email_2fa_ok=False,
+        )
 
     page = http.get("/forgot-password", follow_redirects=False)
     assert page.status_code == 200

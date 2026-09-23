@@ -44,7 +44,8 @@
 
     async function updateStatus() {
         try {
-            const res = await fetch("/notifications");
+            const res = await fetch("/notifications", { redirect: "manual" });
+            if (typeof followSignIn === "function" && followSignIn(res)) return;
             const data = await res.json();
 
             setChip(document.getElementById("chip-wazuh"), data.wazuh_running);

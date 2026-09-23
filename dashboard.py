@@ -354,7 +354,16 @@ _AUTH_SESSION_KEYS = (
     "demo_otp",
     "email_2fa_ok",
     "account_limited",
+    "last_activity",
+    "session_started",
+    "session_epoch",
 )
+
+_REAUTH_MESSAGE = "Sign in again to continue"
+_IDLE_MINUTES_DEFAULT = 15
+_ABSOLUTE_HOURS_DEFAULT = 12
+# Expired cookies must not block these forms. Other routes go to /login.
+_PUBLIC_POST_CONTINUE = {"/login", "/register", "/forgot-password", "/reset-password"}
 
 _AUTH_PUBLIC_PATHS = {
     "/login",
@@ -382,6 +391,107 @@ _reset_ip_lock = threading.Lock()
 def _clear_auth_session() -> None:
     for key in _AUTH_SESSION_KEYS:
         session.pop(key, None)
+
+
+def current_session_epoch() -> str:
+    """Build stamp stored at sign-in. ``APP_SESSION_EPOCH`` overrides ``VERSION``."""
+    override = (os.environ.get("APP_SESSION_EPOCH") or "").strip()
+    if override:
+        return override
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read().strip()
+    except OSError:
+        text = ""
+    return text or "0"
+
+
+def stamp_auth_session(store, user=None, **extra) -> None:
+    """Record the build epoch and activity clock on a sign-in step."""
+    now = time.time()
+    if user is not None:
+        store["user"] = user
+    store["session_epoch"] = current_session_epoch()
+    store["last_activity"] = now
+    store["session_started"] = now
+    for key, value in extra.items():
+        store[key] = value
+
+
+def _session_float(key: str):
+    try:
+        value = session.get(key)
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _idle_limit_seconds() -> float:
+    return _env_int("SESSION_IDLE_MINUTES", _IDLE_MINUTES_DEFAULT, minimum=1) * 60
+
+
+def _absolute_limit_seconds():
+    """Max age from sign-in. ``SESSION_HOURS=0`` leaves only the idle limit."""
+    raw = os.environ.get("SESSION_HOURS")
+    if raw is None or str(raw).strip() == "":
+        return _ABSOLUTE_HOURS_DEFAULT * 3600
+    try:
+        hours = float(str(raw).strip())
+    except ValueError:
+        return _ABSOLUTE_HOURS_DEFAULT * 3600
+    if hours <= 0:
+        return None
+    return hours * 3600
+
+
+def _has_auth_session() -> bool:
+    return bool(session.get("user") or session.get("pending_user") or session.get("account_limited"))
+
+
+def _reauth_reason():
+    if str(session.get("session_epoch") or "") != current_session_epoch():
+        return "epoch"
+    now = time.time()
+    absolute = _absolute_limit_seconds()
+    started = _session_float("session_started")
+    if absolute is not None and started is not None and (now - started) > absolute:
+        return "absolute"
+    last = _session_float("last_activity")
+    if last is None or (now - last) > _idle_limit_seconds():
+        return "idle"
+    return None
+
+
+def _touch_auth_activity() -> None:
+    session["last_activity"] = time.time()
+    if _session_float("session_started") is None:
+        session["session_started"] = session["last_activity"]
+
+
+def _enforce_session_lifetime():
+    """Clear a stale sign-in and send the operator back to /login.
+
+    Idle is measured from the last authenticated request, including console
+    polls. A cookie stamped for a different build epoch is rejected as well.
+    """
+    path = request.path or "/"
+    if path.startswith("/static/"):
+        return None
+    if not _has_auth_session():
+        return None
+    if _reauth_reason() is None:
+        _touch_auth_activity()
+        return None
+    _clear_auth_session()
+    if request.method == "POST" and path in _PUBLIC_POST_CONTINUE:
+        return None
+    session["login_notice"] = _REAUTH_MESSAGE
+    if path == "/login" and request.method == "GET":
+        return None
+    return redirect("/login")
 
 
 def _stored_account_role(identity: str) -> str:
@@ -546,6 +656,9 @@ def _account_gate_response():
 
 @app.before_request
 def _sync_role_on_request():
+    lifetime = _enforce_session_lifetime()
+    if lifetime is not None:
+        return lifetime
     if "user" in session:
         session["role"] = current_role()
         g.current_role = session["role"]
@@ -612,6 +725,7 @@ def _begin_email_otp(username: str, *, subject: str = "Your Verification Code") 
     session["otp_emailed"] = bool(emailed)
     session["otp_email_hint"] = mask_login_email(username)
     session.pop("demo_otp", None)
+    stamp_auth_session(session)
     return bool(emailed)
 
 
@@ -626,6 +740,7 @@ def _establish_session(username: str, *, email_2fa_ok: bool) -> None:
     session.pop("otp_emailed", None)
     session.pop("otp_email_hint", None)
     session.pop("account_limited", None)
+    stamp_auth_session(session)
 
 
 def _render_2fa(error: str = "", message: str = ""):
@@ -710,6 +825,7 @@ def _render_forgot(*, error: str = "", message: str = "", demo_reset_url: str = 
 def login():
     registered = request.args.get("registered") if request.method == "GET" else None
     notice = session.pop("reset_message", None) if request.method == "GET" else None
+    reauth = session.pop("login_notice", None) if request.method == "GET" else None
     if request.method == "POST":
         username = (request.form.get("username") or "").strip()
         password = request.form.get("password") or ""
@@ -723,6 +839,7 @@ def login():
             session["user"] = account["username"]
             session["account_limited"] = True
             session["role"] = current_role()
+            stamp_auth_session(session)
             return redirect("/pending")
 
         if email_2fa_required(account):
@@ -732,7 +849,7 @@ def login():
         _establish_session(account["username"], email_2fa_ok=False)
         return redirect("/")
 
-    return render_template("login.html", registered=registered, message=notice)
+    return render_template("login.html", registered=registered, message=notice, notice=reauth)
 
 
 @app.route("/forgot-password", methods=["GET", "POST"])
@@ -843,6 +960,7 @@ def two_factor():
                 _clear_auth_session()
                 session["user"] = account["username"]
                 session["account_limited"] = True
+                stamp_auth_session(session)
                 return redirect("/pending")
             _establish_session(username, email_2fa_ok=True)
             return redirect("/")
