@@ -19,6 +19,29 @@ def test_classify_private_rfc1918():
         assert meta["classification"] == "private"
 
 
+def test_documentation_ranges_are_not_rfc1918(monkeypatch):
+    monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
+    monkeypatch.setenv("ENRICHMENT_ENABLED", "true")
+    for ip in ("198.51.100.44", "192.0.2.1", "203.0.113.5", "2001:db8::44"):
+        meta = classify_ip(ip)
+        assert meta["valid"] is True
+        assert meta["classification"] == "documentation"
+        assert meta["is_private"] is False
+        assert meta["is_documentation"] is True
+
+    alert = normalize_alert(
+        {
+            "source_ip": "198.51.100.44",
+            "description": "Invalid user admin from 198.51.100.44",
+        }
+    )
+    enrichment, notes = enrich_alert(alert)
+    assert enrichment["src_ip"]["classification"] == "documentation"
+    joined = " ".join(notes).lower()
+    assert "documentation" in joined
+    assert "rfc1918" not in joined
+
+
 def test_classify_public_and_invalid():
     pub = classify_ip("8.8.8.8")
     assert pub["classification"] == "public"

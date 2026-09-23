@@ -1,0 +1,11 @@
+id: DET-AUTH-002
+name: SSH invalid user or failed password for invalid user
+enabled: true
+severity: medium
+priority: 55
+mitre: T1110
+conditions:
+  - field: text
+    op: regex
+    value: "(\\binvalid user\\b|non-existent user|nonexistent user)"
+explain: "sshd invalid-user authentication failure from {src_ip} for user '{user}'."

@@ -225,7 +225,14 @@ def classify_severity(log: str) -> str:
         if phrase in log_l:
             return "high"
 
-    if "failed login" in log_l:
+    # sshd invalid-user wording does not contain the phrase "failed login".
+    # Word-boundary so "invalid username" (login-form copy) stays low.
+    if (
+        "failed login" in log_l
+        or "non-existent user" in log_l
+        or "nonexistent user" in log_l
+        or re.search(r"\binvalid user\b", log_l)
+    ):
         return "medium"
 
     return "low"
