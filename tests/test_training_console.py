@@ -207,7 +207,7 @@ def test_customer_admin_and_analyst_cannot_train(tmp_path, monkeypatch):
     client, _dashboard = _dashboard_client(tmp_path, monkeypatch)
     for user in ("admin@example.com", "analyst@example.com"):
         with client.session_transaction() as sess:
-            sess["user"] = user
+            _dashboard.stamp_auth_session(sess, user)
         home = client.get("/")
         assert home.status_code == 200
         body = home.data.decode("utf-8")
@@ -250,7 +250,7 @@ def test_developer_labels_page_and_event_enqueue(tmp_path, monkeypatch):
         }
     )
     with client.session_transaction() as sess:
-        sess["user"] = "dev@example.com"
+        _dashboard.stamp_auth_session(sess, "dev@example.com")
 
     page = client.get("/labels")
     assert page.status_code == 200

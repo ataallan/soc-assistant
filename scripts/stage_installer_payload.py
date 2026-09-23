@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -58,7 +59,17 @@ REQUIRED_PAYLOAD_PATHS = (
     "requirements.txt",
     ".env.example",
     "docs/INSTALLER.md",
+    "VERSION",
 )
+
+
+def installer_session_epoch(base: str, when: datetime | None = None) -> str:
+    """Epoch written into a Setup.exe payload. Changes on every stage."""
+    lines = (base or "").strip().splitlines()
+    label = lines[0].strip() if lines else ""
+    label = label or "0"
+    moment = when or datetime.now(timezone.utc)
+    return f"{label}+{moment.strftime('%Y%m%d%H%M%S')}"
 
 
 def should_skip_payload(path: Path, root: Path, dest: Path) -> bool:
@@ -110,6 +121,11 @@ def stage(root: Path, dest: Path) -> int:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
         count += 1
+    source_version = ""
+    version_path = root / "VERSION"
+    if version_path.is_file():
+        source_version = version_path.read_text(encoding="utf-8")
+    (dest / "VERSION").write_text(installer_session_epoch(source_version) + "\n", encoding="utf-8")
     missing = missing_required(dest)
     if missing:
         raise SystemExit("Installer payload is missing required files: " + ", ".join(missing))

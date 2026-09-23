@@ -44,6 +44,11 @@ Write-Host "Staging AI-Powered SOC Assistant files ..."
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
+$epochFile = Join-Path $Payload "VERSION"
+if (Test-Path -LiteralPath $epochFile) {
+    $epoch = (Get-Content -LiteralPath $epochFile -Raw).Trim()
+    Write-Host "Session stamp for this setup: $epoch"
+}
 
 if ($VendorPython) {
     $scripts = Join-Path $Root "scripts"

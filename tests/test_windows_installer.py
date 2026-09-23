@@ -137,6 +137,7 @@ def test_build_script_compiles_setup_exe():
     assert "AIPoweredSOCAssistantSetup.exe" in text
     assert "stage_installer_payload.py" in text
     assert "jrsoftware.org/isdl.php" in text
+    assert "Session stamp for this setup" in text
 
 
 def test_staged_payload_has_icon_launcher_and_no_secrets(tmp_path: Path):
@@ -160,6 +161,11 @@ def test_staged_payload_has_icon_launcher_and_no_secrets(tmp_path: Path):
     assert "tests/test_health.py" not in names
     launcher = (dest / "Launch AI-Powered SOC Assistant.bat").read_text(encoding="utf-8")
     assert "launch_app.ps1" in launcher
+    source = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    stamped = (dest / "VERSION").read_text(encoding="utf-8").strip()
+    assert stamped.startswith(source + "+")
+    assert stamped != source
+    assert len(stamped.rsplit("+", 1)[1]) == 14
 
 
 def test_customer_zip_stays_a_folder_install_without_the_setup_compiler(tmp_path: Path):
@@ -188,6 +194,7 @@ def test_installer_doc_covers_customer_and_build_steps():
     assert "127.0.0.1:5000/login" in text
     assert "build_windows_installer.ps1" in text
     assert "windows-installer.yml" in text
+    assert "VERSION" in text
     assert "email" in text.lower()
     assert "SOC_EMAIL_2FA" in text
     assert "false" not in text.split("SOC_EMAIL_2FA", 1)[1][:80]

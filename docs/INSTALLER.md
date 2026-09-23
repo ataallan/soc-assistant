@@ -21,6 +21,8 @@ The unzipped-folder install is still available for a copied project directory. S
 5. Next time, open the Desktop icon **AI-Powered SOC Assistant**. The Start menu has the same entry.
 6. To remove the app, use **Uninstall AI-Powered SOC Assistant** in the Start menu, or Windows Settings. Uninstall removes the program files. Accounts and the local database under the install folder are left in place. Delete `%LocalAppData%\AIPoweredSOCAssistant` to remove those too.
 
+Installing a newer setup program ends existing sign-ins. Open the dashboard and sign in again. Approval and the email code are unchanged.
+
 The first preparation can take a few minutes. Details are written to `install.log` in the install folder.
 
 ## Build `AIPoweredSOCAssistantSetup.exe`
@@ -33,7 +35,7 @@ On Windows, from the repository root:
 powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_installer.ps1
 ```
 
-The script stages `dist\installer-payload` (application files, launcher, and icon, without secrets) and compiles `dist\AIPoweredSOCAssistantSetup.exe`.
+The script stages `dist\installer-payload` (application files, launcher, and icon, without secrets) and compiles `dist\AIPoweredSOCAssistantSetup.exe`. Staging writes a new `VERSION` stamp into that payload so sign-ins from the previous build cannot reopen the console after the upgrade.
 
 Inno Setup 6.3 or newer must be installed. The compiler is usually `C:\Program Files (x86)\Inno Setup 6\ISCC.exe`. Set `INNO_SETUP_ISCC` if it lives somewhere else.
 

@@ -160,12 +160,15 @@ def test_approved_login_requires_email_code_and_marker(client):
 
 
 def test_session_without_email_2fa_ok_is_cleared(client):
-    http, _ = client
+    http, dashboard = client
     http.post("/register", data={"username": "admin@example.com", "password": "correct-horse"})
     with http.session_transaction() as sess:
-        sess["user"] = "admin@example.com"
-        sess["role"] = "admin"
-        sess["email_2fa_ok"] = False
+        dashboard.stamp_auth_session(
+            sess,
+            "admin@example.com",
+            role="admin",
+            email_2fa_ok=False,
+        )
 
     resp = http.get("/health.json", follow_redirects=False)
     assert resp.status_code == 302
@@ -319,7 +322,7 @@ def test_login_uses_resend_helper(client, monkeypatch):
 
 
 def test_login_and_code_templates_harden_input(client):
-    http, _ = client
+    http, dashboard = client
     login = http.get("/login").get_data(as_text=True)
     assert 'autocomplete="off"' in login
     assert "data-autofill-guard" in login
@@ -329,6 +332,7 @@ def test_login_and_code_templates_harden_input(client):
     assert 'data-toggle-password="register-password"' in register
 
     with http.session_transaction() as sess:
+        dashboard.stamp_auth_session(sess)
         sess["pending_user"] = "admin@example.com"
         sess["otp"] = "123456"
         sess["otp_time"] = time.time()

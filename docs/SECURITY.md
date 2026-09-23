@@ -74,6 +74,19 @@ Configured in `dashboard.py`:
 - `SESSION_COOKIE_SAMESITE=Lax` (mitigates classic CSRF from other sites)
 - `SESSION_COOKIE_SECURE` — set `SESSION_COOKIE_SECURE=true` in `.env` when the app is served over **HTTPS**
 
+## Sign-in lifetime
+
+Two clocks end a sign-in. The next request clears the auth cookie keys and opens `/login` with **Sign in again to continue**. The following sign-in still follows approval and the email code when those are on.
+
+| Control | Default | Behavior |
+|---|---|---|
+| `SESSION_IDLE_MINUTES` | 15 | No authenticated request for longer than this ends the sign-in. Each authenticated request, including `/notifications` and other console polls, resets the clock. |
+| `SESSION_HOURS` | 12 | Longest sign-in, measured from sign-in. `SESSION_HOURS=0` leaves only the idle limit. |
+
+A cookie with no epoch, or with an epoch that does not match this process, is ended the same way. The epoch is `APP_SESSION_EPOCH` when that variable is set, otherwise the `VERSION` file next to `dashboard.py`.
+
+Customer setup writes a new `VERSION` into each `AIPoweredSOCAssistantSetup.exe` (`scripts/stage_installer_payload.py`). After an upgrade, a hard refresh still sends the old cookie, and the dashboard asks for sign-in again. Leave `APP_SESSION_EPOCH` unset on those PCs so the setup program's `VERSION` stamp is the one that is checked. Set `APP_SESSION_EPOCH` when a lab or Capstone host should force sign-in without rebuilding the installer.
+
 ## CSRF
 
 `Flask-WTF` `CSRFProtect` validates POST form bodies (`csrf_token` field) and JSON/fetch POSTs (`X-CSRFToken` header). SameSite=Lax remains a second line of defense for cookie-authenticated requests.

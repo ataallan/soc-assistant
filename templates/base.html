@@ -15,6 +15,16 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link href="/static/css/soc.css" rel="stylesheet">
     {% block head_extra %}{% endblock %}
+    <script>
+        function followSignIn(response) {
+            if (!response) return false;
+            if (response.type === "opaqueredirect" || response.status === 301 || response.status === 302) {
+                window.location.assign("/login");
+                return true;
+            }
+            return false;
+        }
+    </script>
 </head>
 
 <body>
@@ -253,9 +263,13 @@
     }
 
     function refreshNotifications() {
-        fetch("/notifications")
-            .then(r => r.json())
+        fetch("/notifications", { redirect: "manual" })
+            .then(r => {
+                if (followSignIn(r)) return null;
+                return r.json();
+            })
             .then(data => {
+                if (!data) return;
                 document.getElementById("notifCriticalCount").innerText = data.severe_alerts;
                 document.getElementById("notifHighCount").innerText = data.escalated_events;
                 document.getElementById("notifBlockedCount").innerText = data.blocked_count;

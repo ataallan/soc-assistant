@@ -53,7 +53,7 @@ def test_health_json_requires_login(app_client):
 def test_health_json_shape(app_client):
     client, dashboard = app_client
     with client.session_transaction() as sess:
-        sess["user"] = "ops@example.com"
+        dashboard.stamp_auth_session(sess, "ops@example.com")
 
     with patch.object(dashboard, "get_token", return_value=None), patch.object(
         dashboard, "get_last_auth_error", return_value="Wazuh password is not set."
@@ -88,7 +88,7 @@ def test_health_json_shape(app_client):
 def test_health_page_renders(app_client):
     client, dashboard = app_client
     with client.session_transaction() as sess:
-        sess["user"] = "ops@example.com"
+        dashboard.stamp_auth_session(sess, "ops@example.com")
     with patch.object(dashboard, "get_token", return_value="tok"), patch.object(
         dashboard, "get_last_auth_error", return_value=None
     ):
@@ -128,7 +128,7 @@ _TUTORIAL_PHRASES = (
 def test_operator_pages_omit_tutorial_copy(app_client):
     client, dashboard = app_client
     with client.session_transaction() as sess:
-        sess["user"] = "ops@example.com"
+        dashboard.stamp_auth_session(sess, "ops@example.com")
 
     paths = ["/", "/blocks", "/report", "/fp-review", "/cases", "/analytics", "/logs/csv"]
     with patch.object(dashboard, "get_token", return_value=None), patch.object(

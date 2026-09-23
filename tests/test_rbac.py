@@ -61,10 +61,9 @@ def rbac_client(tmp_path, monkeypatch):
 
 
 def test_require_admin_blocks_analyst_train(rbac_client):
-    client, _ = rbac_client
+    client, dashboard = rbac_client
     with client.session_transaction() as sess:
-        sess["user"] = "analyst@example.com"
-        sess["role"] = "analyst"
+        dashboard.stamp_auth_session(sess, "analyst@example.com", role="analyst")
 
     resp = client.post(
         "/train-model",
@@ -79,8 +78,7 @@ def test_require_admin_blocks_analyst_train(rbac_client):
 def test_require_admin_allows_admin_backup(rbac_client):
     client, dashboard = rbac_client
     with client.session_transaction() as sess:
-        sess["user"] = "admin@example.com"
-        sess["role"] = "admin"
+        dashboard.stamp_auth_session(sess, "admin@example.com", role="admin")
 
     with patch.object(
         dashboard,
@@ -97,9 +95,9 @@ def test_require_admin_allows_admin_backup(rbac_client):
 
 
 def test_require_admin_blocks_analyst_backup(rbac_client):
-    client, _ = rbac_client
+    client, dashboard = rbac_client
     with client.session_transaction() as sess:
-        sess["user"] = "ops@example.com"
+        dashboard.stamp_auth_session(sess, "ops@example.com")
 
     resp = client.post(
         "/backup",
@@ -112,7 +110,7 @@ def test_admin_email_case_insensitive_login_role(rbac_client):
     client, dashboard = rbac_client
     # LEAD@example.com is in SOC_ADMIN_EMAILS as Lead@Example.COM
     with client.session_transaction() as sess:
-        sess["user"] = "LEAD@example.com"
+        dashboard.stamp_auth_session(sess, "LEAD@example.com")
     with client.application.test_request_context():
         with client.session_transaction():
             pass
@@ -156,7 +154,7 @@ def test_stub_containment_execute_admin_only(tmp_path, monkeypatch):
     client, dashboard, _ = _stub_dashboard_client(tmp_path, monkeypatch, "stub")
 
     with client.session_transaction() as sess:
-        sess["user"] = "analyst@example.com"
+        dashboard.stamp_auth_session(sess, "analyst@example.com")
 
     resp = client.post(
         "/blocks/execute",
@@ -176,7 +174,7 @@ def test_stub_containment_execute_admin_only(tmp_path, monkeypatch):
     assert resp.status_code == 403
 
     with client.session_transaction() as sess:
-        sess["user"] = "admin@example.com"
+        dashboard.stamp_auth_session(sess, "admin@example.com")
 
     # Missing confirm → 400
     resp = client.post(
@@ -203,10 +201,10 @@ def test_stub_containment_execute_admin_only(tmp_path, monkeypatch):
 
 
 def test_blocks_preview_json_for_analyst(tmp_path, monkeypatch):
-    client, _, _ = _stub_dashboard_client(tmp_path, monkeypatch, "live")
+    client, dashboard, _ = _stub_dashboard_client(tmp_path, monkeypatch, "live")
 
     with client.session_transaction() as sess:
-        sess["user"] = "analyst@example.com"
+        dashboard.stamp_auth_session(sess, "analyst@example.com")
 
     resp = client.post(
         "/blocks/preview",
@@ -221,9 +219,9 @@ def test_blocks_preview_json_for_analyst(tmp_path, monkeypatch):
 
 
 def test_security_headers_present(rbac_client):
-    client, _ = rbac_client
+    client, dashboard = rbac_client
     with client.session_transaction() as sess:
-        sess["user"] = "analyst@example.com"
+        dashboard.stamp_auth_session(sess, "analyst@example.com")
     resp = client.get("/")
     assert resp.headers.get("X-Frame-Options") == "DENY"
     assert resp.headers.get("X-Content-Type-Options") == "nosniff"
