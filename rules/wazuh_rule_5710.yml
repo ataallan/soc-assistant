@@ -1,0 +1,11 @@
+id: DET-AUTH-5710
+name: SSH non-existent user (Wazuh 5710)
+enabled: true
+severity: medium
+priority: 62
+mitre: T1110
+conditions:
+  - field: rule_id
+    op: eq
+    value: "5710"
+explain: "Wazuh rule 5710: sshd attempt to login using a non-existent user from {src_ip} (user '{user}')."

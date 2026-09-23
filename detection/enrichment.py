@@ -17,6 +17,15 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_ASSETS_YML = _REPO_ROOT / "config" / "assets.yml"
 _DEFAULT_ASSETS_CSV = _REPO_ROOT / "data" / "asset_inventory.csv"
 
+# RFC 5737 TEST-NET and RFC 3849 documentation prefixes.
+# CPython marks these is_private (IANA special-purpose). They are not RFC1918.
+_DOCUMENTATION_NETWORKS = (
+    ipaddress.ip_network("192.0.2.0/24"),
+    ipaddress.ip_network("198.51.100.0/24"),
+    ipaddress.ip_network("203.0.113.0/24"),
+    ipaddress.ip_network("2001:db8::/32"),
+)
+
 # Cached inventory: keyed by lowercased ip / hostname
 _INVENTORY_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
 
@@ -26,13 +35,18 @@ def enrichment_enabled() -> bool:
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _is_documentation_addr(addr: ipaddress._BaseAddress) -> bool:
+    return any(addr in net for net in _DOCUMENTATION_NETWORKS)
+
+
 def classify_ip(ip: Optional[str]) -> Dict[str, Any]:
-    """Classify an IP (RFC1918 private, loopback, link-local, public, etc.)."""
+    """Classify an IP (RFC1918 private, documentation, loopback, public, etc.)."""
     result = {
         "ip": ip,
         "valid": False,
         "version": None,
         "is_private": False,
+        "is_documentation": False,
         "is_loopback": False,
         "is_link_local": False,
         "is_multicast": False,
@@ -59,7 +73,12 @@ def classify_ip(ip: Optional[str]) -> Dict[str, Any]:
     result["is_reserved"] = bool(getattr(addr, "is_reserved", False))
     result["is_global"] = bool(getattr(addr, "is_global", False))
 
-    if addr.is_loopback:
+    if _is_documentation_addr(addr):
+        # Do not inherit CPython's is_private flag for TEST-NET / documentation.
+        result["is_private"] = False
+        result["is_documentation"] = True
+        result["classification"] = "documentation"
+    elif addr.is_loopback:
         result["classification"] = "loopback"
     elif addr.is_link_local:
         result["classification"] = "link_local"
@@ -182,7 +201,14 @@ def abuseipdb_lookup(ip: Optional[str]) -> Optional[Dict[str, Any]]:
     # Explicit skip in pytest / offline
     if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("ENRICHMENT_OFFLINE") == "1":
         return None
-    if classify_ip(ip).get("classification") in ("private", "loopback", "link_local", "missing", "invalid"):
+    if classify_ip(ip).get("classification") in (
+        "private",
+        "documentation",
+        "loopback",
+        "link_local",
+        "missing",
+        "invalid",
+    ):
         return None
 
     try:
@@ -231,9 +257,12 @@ def enrich_alert(alert: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
         host = alert.get("host")
 
         enrichment["src_ip"] = classify_ip(src)
-        if src and enrichment["src_ip"].get("classification") == "private":
+        src_class = enrichment["src_ip"].get("classification")
+        if src and src_class == "private":
             notes.append(f"Source IP {src} is RFC1918/private")
-        elif src and enrichment["src_ip"].get("classification") == "public":
+        elif src and src_class == "documentation":
+            notes.append(f"Source IP {src} is a documentation address")
+        elif src and src_class == "public":
             notes.append(f"Source IP {src} is public")
 
         if dst:

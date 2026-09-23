@@ -7,5 +7,7 @@ mitre: T1078.001
 conditions:
   - field: text
     op: regex
-    value: "(root login|domain admin|privilege escalation|lateral movement|admin.*(login|fail)|sudo.*(fail|unauthorized))"
+    # Keep admin/login close together so a nonexistent user named "admin"
+    # plus a later "login" in the Wazuh description does not count as this anomaly.
+    value: "(root login|domain admin|privilege escalation|lateral movement|admin(?:istrator)?(?:\\s+\\S+){0,2}\\s+(login|fail)|sudo.*(fail|unauthorized))"
 explain: "Admin/privileged anomaly involving user '{user}' on host '{host}'."
